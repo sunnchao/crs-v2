@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"sub2api/internal/middleware"
-	"sub2api/internal/pkg/gemini"
-	"sub2api/internal/service"
+	"github.com/Wei-Shaw/sub2api/internal/middleware"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/gemini"
+	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
 )

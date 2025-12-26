@@ -49,5 +49,5 @@ var ProviderSet = wire.NewSet(
 	wire.Bind(new(service.UsageLogRepository), new(*UsageLogRepository)),
 	wire.Bind(new(service.SettingRepository), new(*SettingRepository)),
 	wire.Bind(new(service.UserSubscriptionRepository), new(*UserSubscriptionRepository)),
-	wire.Bind(new(ports.GeminiOAuthClient), new(*GeminiOAuthClient)),
+	wire.Bind(new(service.GeminiOAuthClient), new(*GeminiOAuthClient)),
 )

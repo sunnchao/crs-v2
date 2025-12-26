@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"sub2api/internal/pkg/gemini"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/gemini"
 )
 
 // GeminiOAuthClient implements Gemini OAuth HTTP operations

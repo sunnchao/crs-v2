@@ -5,24 +5,23 @@ import (
 	"fmt"
 	"time"
 
-	"sub2api/internal/model"
-	"sub2api/internal/pkg/gemini"
-	"sub2api/internal/service/ports"
+	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/gemini"
 )
 
 // GeminiOAuthService handles Gemini OAuth authentication flows
 type GeminiOAuthService struct {
 	sessionStore *gemini.SessionStore
-	proxyRepo    ports.ProxyRepository
-	accountRepo  ports.AccountRepository
-	oauthClient  ports.GeminiOAuthClient
+	proxyRepo    ProxyRepository
+	accountRepo  AccountRepository
+	oauthClient  GeminiOAuthClient
 }
 
 // NewGeminiOAuthService creates a new GeminiOAuthService
 func NewGeminiOAuthService(
-	proxyRepo ports.ProxyRepository,
-	accountRepo ports.AccountRepository,
-	oauthClient ports.GeminiOAuthClient,
+	proxyRepo ProxyRepository,
+	accountRepo AccountRepository,
+	oauthClient GeminiOAuthClient,
 ) *GeminiOAuthService {
 	return &GeminiOAuthService{
 		sessionStore: gemini.NewSessionStore(),

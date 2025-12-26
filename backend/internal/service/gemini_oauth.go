@@ -1,9 +1,9 @@
-package ports
+package service
 
 import (
 	"context"
 
-	"sub2api/internal/pkg/gemini"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/gemini"
 )
 
 // GeminiOAuthClient interface for Gemini OAuth operations

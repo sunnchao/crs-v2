@@ -14,10 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"sub2api/internal/config"
-	"sub2api/internal/model"
-	"sub2api/internal/pkg/gemini"
-	"sub2api/internal/service/ports"
+	"github.com/Wei-Shaw/sub2api/internal/config"
+	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/pkg/gemini"
 
 	"github.com/gin-gonic/gin"
 )
@@ -53,30 +52,30 @@ type GeminiForwardResult struct {
 
 // GeminiGatewayService handles Gemini API gateway operations
 type GeminiGatewayService struct {
-	accountRepo         ports.AccountRepository
-	usageLogRepo        ports.UsageLogRepository
-	userRepo            ports.UserRepository
-	userSubRepo         ports.UserSubscriptionRepository
-	cache               ports.GatewayCache
+	accountRepo         AccountRepository
+	usageLogRepo        UsageLogRepository
+	userRepo            UserRepository
+	userSubRepo         UserSubscriptionRepository
+	cache               GatewayCache
 	cfg                 *config.Config
 	billingService      *BillingService
 	rateLimitService    *RateLimitService
 	billingCacheService *BillingCacheService
-	httpUpstream        ports.HTTPUpstream
+	httpUpstream        HTTPUpstream
 }
 
 // NewGeminiGatewayService creates a new GeminiGatewayService
 func NewGeminiGatewayService(
-	accountRepo ports.AccountRepository,
-	usageLogRepo ports.UsageLogRepository,
-	userRepo ports.UserRepository,
-	userSubRepo ports.UserSubscriptionRepository,
-	cache ports.GatewayCache,
+	accountRepo AccountRepository,
+	usageLogRepo UsageLogRepository,
+	userRepo UserRepository,
+	userSubRepo UserSubscriptionRepository,
+	cache GatewayCache,
 	cfg *config.Config,
 	billingService *BillingService,
 	rateLimitService *RateLimitService,
 	billingCacheService *BillingCacheService,
-	httpUpstream ports.HTTPUpstream,
+	httpUpstream HTTPUpstream,
 ) *GeminiGatewayService {
 	return &GeminiGatewayService{
 		accountRepo:         accountRepo,
