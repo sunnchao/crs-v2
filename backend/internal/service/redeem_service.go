@@ -9,19 +9,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/infrastructure/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
-	"github.com/redis/go-redis/v9"
-	"gorm.io/gorm"
 )
 
 var (
-	ErrRedeemCodeNotFound  = errors.New("redeem code not found")
-	ErrRedeemCodeUsed      = errors.New("redeem code already used")
-	ErrRedeemCodeInvalid   = errors.New("invalid redeem code")
-	ErrInsufficientBalance = errors.New("insufficient balance")
-	ErrRedeemRateLimited   = errors.New("too many failed attempts, please try again later")
-	ErrRedeemCodeLocked    = errors.New("redeem code is being processed, please try again")
+	ErrRedeemCodeNotFound  = infraerrors.NotFound("REDEEM_CODE_NOT_FOUND", "redeem code not found")
+	ErrRedeemCodeUsed      = infraerrors.Conflict("REDEEM_CODE_USED", "redeem code already used")
+	ErrInsufficientBalance = infraerrors.BadRequest("INSUFFICIENT_BALANCE", "insufficient balance")
+	ErrRedeemRateLimited   = infraerrors.TooManyRequests("REDEEM_RATE_LIMITED", "too many failed attempts, please try again later")
+	ErrRedeemCodeLocked    = infraerrors.Conflict("REDEEM_CODE_LOCKED", "redeem code is being processed, please try again")
 )
 
 const (
@@ -40,17 +37,17 @@ type RedeemCache interface {
 }
 
 type RedeemCodeRepository interface {
-	Create(ctx context.Context, code *model.RedeemCode) error
-	CreateBatch(ctx context.Context, codes []model.RedeemCode) error
-	GetByID(ctx context.Context, id int64) (*model.RedeemCode, error)
-	GetByCode(ctx context.Context, code string) (*model.RedeemCode, error)
-	Update(ctx context.Context, code *model.RedeemCode) error
+	Create(ctx context.Context, code *RedeemCode) error
+	CreateBatch(ctx context.Context, codes []RedeemCode) error
+	GetByID(ctx context.Context, id int64) (*RedeemCode, error)
+	GetByCode(ctx context.Context, code string) (*RedeemCode, error)
+	Update(ctx context.Context, code *RedeemCode) error
 	Delete(ctx context.Context, id int64) error
 	Use(ctx context.Context, id, userID int64) error
 
-	List(ctx context.Context, params pagination.PaginationParams) ([]model.RedeemCode, *pagination.PaginationResult, error)
-	ListWithFilters(ctx context.Context, params pagination.PaginationParams, codeType, status, search string) ([]model.RedeemCode, *pagination.PaginationResult, error)
-	ListByUser(ctx context.Context, userID int64, limit int) ([]model.RedeemCode, error)
+	List(ctx context.Context, params pagination.PaginationParams) ([]RedeemCode, *pagination.PaginationResult, error)
+	ListWithFilters(ctx context.Context, params pagination.PaginationParams, codeType, status, search string) ([]RedeemCode, *pagination.PaginationResult, error)
+	ListByUser(ctx context.Context, userID int64, limit int) ([]RedeemCode, error)
 }
 
 // GenerateCodesRequest 生成兑换码请求
@@ -117,7 +114,7 @@ func (s *RedeemService) GenerateRandomCode() (string, error) {
 }
 
 // GenerateCodes 批量生成兑换码
-func (s *RedeemService) GenerateCodes(ctx context.Context, req GenerateCodesRequest) ([]model.RedeemCode, error) {
+func (s *RedeemService) GenerateCodes(ctx context.Context, req GenerateCodesRequest) ([]RedeemCode, error) {
 	if req.Count <= 0 {
 		return nil, errors.New("count must be greater than 0")
 	}
@@ -132,21 +129,21 @@ func (s *RedeemService) GenerateCodes(ctx context.Context, req GenerateCodesRequ
 
 	codeType := req.Type
 	if codeType == "" {
-		codeType = model.RedeemTypeBalance
+		codeType = RedeemTypeBalance
 	}
 
-	codes := make([]model.RedeemCode, 0, req.Count)
+	codes := make([]RedeemCode, 0, req.Count)
 	for i := 0; i < req.Count; i++ {
 		code, err := s.GenerateRandomCode()
 		if err != nil {
 			return nil, fmt.Errorf("generate code: %w", err)
 		}
 
-		codes = append(codes, model.RedeemCode{
+		codes = append(codes, RedeemCode{
 			Code:   code,
 			Type:   codeType,
 			Value:  req.Value,
-			Status: model.StatusUnused,
+			Status: StatusUnused,
 		})
 	}
 
@@ -165,7 +162,7 @@ func (s *RedeemService) checkRedeemRateLimit(ctx context.Context, userID int64) 
 	}
 
 	count, err := s.cache.GetRedeemAttemptCount(ctx, userID)
-	if err != nil && !errors.Is(err, redis.Nil) {
+	if err != nil {
 		// Redis 出错时不阻止用户操作
 		return nil
 	}
@@ -211,7 +208,7 @@ func (s *RedeemService) releaseRedeemLock(ctx context.Context, code string) {
 }
 
 // Redeem 使用兑换码
-func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (*model.RedeemCode, error) {
+func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (*RedeemCode, error) {
 	// 检查限流
 	if err := s.checkRedeemRateLimit(ctx, userID); err != nil {
 		return nil, err
@@ -226,7 +223,7 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 	// 查找兑换码
 	redeemCode, err := s.redeemRepo.GetByCode(ctx, code)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, ErrRedeemCodeNotFound) {
 			s.incrementRedeemErrorCount(ctx, userID)
 			return nil, ErrRedeemCodeNotFound
 		}
@@ -240,16 +237,13 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 	}
 
 	// 验证兑换码类型的前置条件
-	if redeemCode.Type == model.RedeemTypeSubscription && redeemCode.GroupID == nil {
-		return nil, errors.New("invalid subscription redeem code: missing group_id")
+	if redeemCode.Type == RedeemTypeSubscription && redeemCode.GroupID == nil {
+		return nil, infraerrors.BadRequest("REDEEM_CODE_INVALID", "invalid subscription redeem code: missing group_id")
 	}
 
 	// 获取用户信息
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrUserNotFound
-		}
 		return nil, fmt.Errorf("get user: %w", err)
 	}
 	_ = user // 使用变量避免未使用错误
@@ -257,8 +251,7 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 	// 【关键】先标记兑换码为已使用，确保并发安全
 	// 利用数据库乐观锁（WHERE status = 'unused'）保证原子性
 	if err := s.redeemRepo.Use(ctx, redeemCode.ID, userID); err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			// 兑换码已被其他请求使用
+		if errors.Is(err, ErrRedeemCodeNotFound) || errors.Is(err, ErrRedeemCodeUsed) {
 			return nil, ErrRedeemCodeUsed
 		}
 		return nil, fmt.Errorf("mark code as used: %w", err)
@@ -266,7 +259,7 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 
 	// 执行兑换逻辑（兑换码已被锁定，此时可安全操作）
 	switch redeemCode.Type {
-	case model.RedeemTypeBalance:
+	case RedeemTypeBalance:
 		// 增加用户余额
 		if err := s.userRepo.UpdateBalance(ctx, userID, redeemCode.Value); err != nil {
 			return nil, fmt.Errorf("update user balance: %w", err)
@@ -280,13 +273,13 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 			}()
 		}
 
-	case model.RedeemTypeConcurrency:
+	case RedeemTypeConcurrency:
 		// 增加用户并发数
 		if err := s.userRepo.UpdateConcurrency(ctx, userID, int(redeemCode.Value)); err != nil {
 			return nil, fmt.Errorf("update user concurrency: %w", err)
 		}
 
-	case model.RedeemTypeSubscription:
+	case RedeemTypeSubscription:
 		validityDays := redeemCode.ValidityDays
 		if validityDays <= 0 {
 			validityDays = 30
@@ -325,31 +318,25 @@ func (s *RedeemService) Redeem(ctx context.Context, userID int64, code string) (
 }
 
 // GetByID 根据ID获取兑换码
-func (s *RedeemService) GetByID(ctx context.Context, id int64) (*model.RedeemCode, error) {
+func (s *RedeemService) GetByID(ctx context.Context, id int64) (*RedeemCode, error) {
 	code, err := s.redeemRepo.GetByID(ctx, id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrRedeemCodeNotFound
-		}
 		return nil, fmt.Errorf("get redeem code: %w", err)
 	}
 	return code, nil
 }
 
 // GetByCode 根据Code获取兑换码
-func (s *RedeemService) GetByCode(ctx context.Context, code string) (*model.RedeemCode, error) {
+func (s *RedeemService) GetByCode(ctx context.Context, code string) (*RedeemCode, error) {
 	redeemCode, err := s.redeemRepo.GetByCode(ctx, code)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrRedeemCodeNotFound
-		}
 		return nil, fmt.Errorf("get redeem code: %w", err)
 	}
 	return redeemCode, nil
 }
 
 // List 获取兑换码列表（管理员功能）
-func (s *RedeemService) List(ctx context.Context, params pagination.PaginationParams) ([]model.RedeemCode, *pagination.PaginationResult, error) {
+func (s *RedeemService) List(ctx context.Context, params pagination.PaginationParams) ([]RedeemCode, *pagination.PaginationResult, error) {
 	codes, pagination, err := s.redeemRepo.List(ctx, params)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list redeem codes: %w", err)
@@ -362,15 +349,12 @@ func (s *RedeemService) Delete(ctx context.Context, id int64) error {
 	// 检查兑换码是否存在
 	code, err := s.redeemRepo.GetByID(ctx, id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrRedeemCodeNotFound
-		}
 		return fmt.Errorf("get redeem code: %w", err)
 	}
 
 	// 不允许删除已使用的兑换码
 	if code.IsUsed() {
-		return errors.New("cannot delete used redeem code")
+		return infraerrors.Conflict("REDEEM_CODE_DELETE_USED", "cannot delete used redeem code")
 	}
 
 	if err := s.redeemRepo.Delete(ctx, id); err != nil {
@@ -397,7 +381,7 @@ func (s *RedeemService) GetStats(ctx context.Context) (map[string]any, error) {
 }
 
 // GetUserHistory 获取用户的兑换历史
-func (s *RedeemService) GetUserHistory(ctx context.Context, userID int64, limit int) ([]model.RedeemCode, error) {
+func (s *RedeemService) GetUserHistory(ctx context.Context, userID int64, limit int) ([]RedeemCode, error) {
 	codes, err := s.redeemRepo.ListByUser(ctx, userID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get user redeem history: %w", err)

@@ -3,6 +3,7 @@ package admin
 import (
 	"strconv"
 
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -40,7 +41,7 @@ func (h *OpenAIOAuthHandler) GenerateAuthURL(c *gin.Context) {
 
 	result, err := h.openaiOAuthService.GenerateAuthURL(c.Request.Context(), req.ProxyID, req.RedirectURI)
 	if err != nil {
-		response.InternalError(c, "Failed to generate auth URL: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -71,7 +72,7 @@ func (h *OpenAIOAuthHandler) ExchangeCode(c *gin.Context) {
 		ProxyID:     req.ProxyID,
 	})
 	if err != nil {
-		response.BadRequest(c, "Failed to exchange code: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -103,7 +104,7 @@ func (h *OpenAIOAuthHandler) RefreshToken(c *gin.Context) {
 
 	tokenInfo, err := h.openaiOAuthService.RefreshToken(c.Request.Context(), req.RefreshToken, proxyURL)
 	if err != nil {
-		response.BadRequest(c, "Failed to refresh token: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -122,7 +123,7 @@ func (h *OpenAIOAuthHandler) RefreshAccountToken(c *gin.Context) {
 	// Get account
 	account, err := h.adminService.GetAccount(c.Request.Context(), accountID)
 	if err != nil {
-		response.NotFound(c, "Account not found")
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -141,7 +142,7 @@ func (h *OpenAIOAuthHandler) RefreshAccountToken(c *gin.Context) {
 	// Use OpenAI OAuth service to refresh token
 	tokenInfo, err := h.openaiOAuthService.RefreshAccountToken(c.Request.Context(), account)
 	if err != nil {
-		response.InternalError(c, "Failed to refresh credentials: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -159,11 +160,11 @@ func (h *OpenAIOAuthHandler) RefreshAccountToken(c *gin.Context) {
 		Credentials: newCredentials,
 	})
 	if err != nil {
-		response.InternalError(c, "Failed to update account credentials: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, updatedAccount)
+	response.Success(c, dto.AccountFromService(updatedAccount))
 }
 
 // CreateAccountFromOAuth creates a new OpenAI OAuth account from token info
@@ -192,7 +193,7 @@ func (h *OpenAIOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 		ProxyID:     req.ProxyID,
 	})
 	if err != nil {
-		response.BadRequest(c, "Failed to exchange code: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -220,9 +221,9 @@ func (h *OpenAIOAuthHandler) CreateAccountFromOAuth(c *gin.Context) {
 		GroupIDs:    req.GroupIDs,
 	})
 	if err != nil {
-		response.InternalError(c, "Failed to create account: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, account)
+	response.Success(c, dto.AccountFromService(account))
 }

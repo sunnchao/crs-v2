@@ -2,35 +2,32 @@ package repository
 
 import (
 	"context"
-	"github.com/Wei-Shaw/sub2api/internal/model"
 	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
-// SettingRepository 系统设置数据访问层
-type SettingRepository struct {
+type settingRepository struct {
 	db *gorm.DB
 }
 
-// NewSettingRepository 创建系统设置仓库实例
-func NewSettingRepository(db *gorm.DB) *SettingRepository {
-	return &SettingRepository{db: db}
+func NewSettingRepository(db *gorm.DB) service.SettingRepository {
+	return &settingRepository{db: db}
 }
 
-// Get 根据Key获取设置值
-func (r *SettingRepository) Get(ctx context.Context, key string) (*model.Setting, error) {
-	var setting model.Setting
-	err := r.db.WithContext(ctx).Where("key = ?", key).First(&setting).Error
+func (r *settingRepository) Get(ctx context.Context, key string) (*service.Setting, error) {
+	var m settingModel
+	err := r.db.WithContext(ctx).Where("key = ?", key).First(&m).Error
 	if err != nil {
-		return nil, err
+		return nil, translatePersistenceError(err, service.ErrSettingNotFound, nil)
 	}
-	return &setting, nil
+	return settingModelToService(&m), nil
 }
 
-// GetValue 获取设置值字符串
-func (r *SettingRepository) GetValue(ctx context.Context, key string) (string, error) {
+func (r *settingRepository) GetValue(ctx context.Context, key string) (string, error) {
 	setting, err := r.Get(ctx, key)
 	if err != nil {
 		return "", err
@@ -38,9 +35,8 @@ func (r *SettingRepository) GetValue(ctx context.Context, key string) (string, e
 	return setting.Value, nil
 }
 
-// Set 设置值（存在则更新，不存在则创建）
-func (r *SettingRepository) Set(ctx context.Context, key, value string) error {
-	setting := &model.Setting{
+func (r *settingRepository) Set(ctx context.Context, key, value string) error {
+	m := &settingModel{
 		Key:       key,
 		Value:     value,
 		UpdatedAt: time.Now(),
@@ -49,12 +45,11 @@ func (r *SettingRepository) Set(ctx context.Context, key, value string) error {
 	return r.db.WithContext(ctx).Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "key"}},
 		DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
-	}).Create(setting).Error
+	}).Create(m).Error
 }
 
-// GetMultiple 批量获取设置
-func (r *SettingRepository) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
-	var settings []model.Setting
+func (r *settingRepository) GetMultiple(ctx context.Context, keys []string) (map[string]string, error) {
+	var settings []settingModel
 	err := r.db.WithContext(ctx).Where("key IN ?", keys).Find(&settings).Error
 	if err != nil {
 		return nil, err
@@ -67,11 +62,10 @@ func (r *SettingRepository) GetMultiple(ctx context.Context, keys []string) (map
 	return result, nil
 }
 
-// SetMultiple 批量设置值
-func (r *SettingRepository) SetMultiple(ctx context.Context, settings map[string]string) error {
+func (r *settingRepository) SetMultiple(ctx context.Context, settings map[string]string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		for key, value := range settings {
-			setting := &model.Setting{
+			m := &settingModel{
 				Key:       key,
 				Value:     value,
 				UpdatedAt: time.Now(),
@@ -79,7 +73,7 @@ func (r *SettingRepository) SetMultiple(ctx context.Context, settings map[string
 			if err := tx.Clauses(clause.OnConflict{
 				Columns:   []clause.Column{{Name: "key"}},
 				DoUpdates: clause.AssignmentColumns([]string{"value", "updated_at"}),
-			}).Create(setting).Error; err != nil {
+			}).Create(m).Error; err != nil {
 				return err
 			}
 		}
@@ -87,9 +81,8 @@ func (r *SettingRepository) SetMultiple(ctx context.Context, settings map[string
 	})
 }
 
-// GetAll 获取所有设置
-func (r *SettingRepository) GetAll(ctx context.Context) (map[string]string, error) {
-	var settings []model.Setting
+func (r *settingRepository) GetAll(ctx context.Context) (map[string]string, error) {
+	var settings []settingModel
 	err := r.db.WithContext(ctx).Find(&settings).Error
 	if err != nil {
 		return nil, err
@@ -102,7 +95,27 @@ func (r *SettingRepository) GetAll(ctx context.Context) (map[string]string, erro
 	return result, nil
 }
 
-// Delete 删除设置
-func (r *SettingRepository) Delete(ctx context.Context, key string) error {
-	return r.db.WithContext(ctx).Where("key = ?", key).Delete(&model.Setting{}).Error
+func (r *settingRepository) Delete(ctx context.Context, key string) error {
+	return r.db.WithContext(ctx).Where("key = ?", key).Delete(&settingModel{}).Error
+}
+
+type settingModel struct {
+	ID        int64     `gorm:"primaryKey"`
+	Key       string    `gorm:"uniqueIndex;size:100;not null"`
+	Value     string    `gorm:"type:text;not null"`
+	UpdatedAt time.Time `gorm:"not null"`
+}
+
+func (settingModel) TableName() string { return "settings" }
+
+func settingModelToService(m *settingModel) *service.Setting {
+	if m == nil {
+		return nil
+	}
+	return &service.Setting{
+		ID:        m.ID,
+		Key:       m.Key,
+		Value:     m.Value,
+		UpdatedAt: m.UpdatedAt,
+	}
 }

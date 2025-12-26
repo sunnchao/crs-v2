@@ -79,7 +79,4 @@ var ProviderSet = wire.NewSet(
 	NewCRSSyncService,
 	ProvideUpdateService,
 	ProvideTokenRefreshService,
-
-	// Provide the Services container struct
-	wire.Struct(new(Services), "*"),
 )

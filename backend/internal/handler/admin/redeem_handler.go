@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -43,11 +44,15 @@ func (h *RedeemHandler) List(c *gin.Context) {
 
 	codes, total, err := h.adminService.ListRedeemCodes(c.Request.Context(), page, pageSize, codeType, status, search)
 	if err != nil {
-		response.InternalError(c, "Failed to list redeem codes: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Paginated(c, codes, total, page, pageSize)
+	out := make([]dto.RedeemCode, 0, len(codes))
+	for i := range codes {
+		out = append(out, *dto.RedeemCodeFromService(&codes[i]))
+	}
+	response.Paginated(c, out, total, page, pageSize)
 }
 
 // GetByID handles getting a redeem code by ID
@@ -61,11 +66,11 @@ func (h *RedeemHandler) GetByID(c *gin.Context) {
 
 	code, err := h.adminService.GetRedeemCode(c.Request.Context(), codeID)
 	if err != nil {
-		response.NotFound(c, "Redeem code not found")
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, code)
+	response.Success(c, dto.RedeemCodeFromService(code))
 }
 
 // Generate handles generating new redeem codes
@@ -85,11 +90,15 @@ func (h *RedeemHandler) Generate(c *gin.Context) {
 		ValidityDays: req.ValidityDays,
 	})
 	if err != nil {
-		response.InternalError(c, "Failed to generate redeem codes: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, codes)
+	out := make([]dto.RedeemCode, 0, len(codes))
+	for i := range codes {
+		out = append(out, *dto.RedeemCodeFromService(&codes[i]))
+	}
+	response.Success(c, out)
 }
 
 // Delete handles deleting a redeem code
@@ -103,7 +112,7 @@ func (h *RedeemHandler) Delete(c *gin.Context) {
 
 	err = h.adminService.DeleteRedeemCode(c.Request.Context(), codeID)
 	if err != nil {
-		response.InternalError(c, "Failed to delete redeem code: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -123,7 +132,7 @@ func (h *RedeemHandler) BatchDelete(c *gin.Context) {
 
 	deleted, err := h.adminService.BatchDeleteRedeemCodes(c.Request.Context(), req.IDs)
 	if err != nil {
-		response.InternalError(c, "Failed to batch delete redeem codes: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -144,11 +153,11 @@ func (h *RedeemHandler) Expire(c *gin.Context) {
 
 	code, err := h.adminService.ExpireRedeemCode(c.Request.Context(), codeID)
 	if err != nil {
-		response.InternalError(c, "Failed to expire redeem code: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, code)
+	response.Success(c, dto.RedeemCodeFromService(code))
 }
 
 // GetStats handles getting redeem code statistics
@@ -178,7 +187,7 @@ func (h *RedeemHandler) Export(c *gin.Context) {
 	// Get all codes without pagination (use large page size)
 	codes, _, err := h.adminService.ListRedeemCodes(c.Request.Context(), 1, 10000, codeType, status, "")
 	if err != nil {
-		response.InternalError(c, "Failed to export redeem codes: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 

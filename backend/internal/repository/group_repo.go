@@ -2,51 +2,68 @@ package repository
 
 import (
 	"context"
-	"github.com/Wei-Shaw/sub2api/internal/model"
+	"time"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
+
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
-type GroupRepository struct {
+type groupRepository struct {
 	db *gorm.DB
 }
 
-func NewGroupRepository(db *gorm.DB) *GroupRepository {
-	return &GroupRepository{db: db}
+func NewGroupRepository(db *gorm.DB) service.GroupRepository {
+	return &groupRepository{db: db}
 }
 
-func (r *GroupRepository) Create(ctx context.Context, group *model.Group) error {
-	return r.db.WithContext(ctx).Create(group).Error
-}
-
-func (r *GroupRepository) GetByID(ctx context.Context, id int64) (*model.Group, error) {
-	var group model.Group
-	err := r.db.WithContext(ctx).First(&group, id).Error
-	if err != nil {
-		return nil, err
+func (r *groupRepository) Create(ctx context.Context, group *service.Group) error {
+	m := groupModelFromService(group)
+	err := r.db.WithContext(ctx).Create(m).Error
+	if err == nil {
+		applyGroupModelToService(group, m)
 	}
-	return &group, nil
+	return translatePersistenceError(err, nil, service.ErrGroupExists)
 }
 
-func (r *GroupRepository) Update(ctx context.Context, group *model.Group) error {
-	return r.db.WithContext(ctx).Save(group).Error
+func (r *groupRepository) GetByID(ctx context.Context, id int64) (*service.Group, error) {
+	var m groupModel
+	err := r.db.WithContext(ctx).First(&m, id).Error
+	if err != nil {
+		return nil, translatePersistenceError(err, service.ErrGroupNotFound, nil)
+	}
+	group := groupModelToService(&m)
+	count, _ := r.GetAccountCount(ctx, group.ID)
+	group.AccountCount = count
+	return group, nil
 }
 
-func (r *GroupRepository) Delete(ctx context.Context, id int64) error {
-	return r.db.WithContext(ctx).Delete(&model.Group{}, id).Error
+func (r *groupRepository) Update(ctx context.Context, group *service.Group) error {
+	m := groupModelFromService(group)
+	err := r.db.WithContext(ctx).Save(m).Error
+	if err == nil {
+		applyGroupModelToService(group, m)
+	}
+	return err
 }
 
-func (r *GroupRepository) List(ctx context.Context, params pagination.PaginationParams) ([]model.Group, *pagination.PaginationResult, error) {
+func (r *groupRepository) Delete(ctx context.Context, id int64) error {
+	return r.db.WithContext(ctx).Delete(&groupModel{}, id).Error
+}
+
+func (r *groupRepository) List(ctx context.Context, params pagination.PaginationParams) ([]service.Group, *pagination.PaginationResult, error) {
 	return r.ListWithFilters(ctx, params, "", "", nil)
 }
 
 // ListWithFilters lists groups with optional filtering by platform, status, and is_exclusive
-func (r *GroupRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, status string, isExclusive *bool) ([]model.Group, *pagination.PaginationResult, error) {
-	var groups []model.Group
+func (r *groupRepository) ListWithFilters(ctx context.Context, params pagination.PaginationParams, platform, status string, isExclusive *bool) ([]service.Group, *pagination.PaginationResult, error) {
+	var groups []groupModel
 	var total int64
 
-	db := r.db.WithContext(ctx).Model(&model.Group{})
+	db := r.db.WithContext(ctx).Model(&groupModel{})
 
 	// Apply filters
 	if platform != "" {
@@ -67,72 +84,198 @@ func (r *GroupRepository) ListWithFilters(ctx context.Context, params pagination
 		return nil, nil, err
 	}
 
-	// 获取每个分组的账号数量
+	outGroups := make([]service.Group, 0, len(groups))
 	for i := range groups {
-		count, _ := r.GetAccountCount(ctx, groups[i].ID)
-		groups[i].AccountCount = count
+		outGroups = append(outGroups, *groupModelToService(&groups[i]))
 	}
 
-	pages := int(total) / params.Limit()
-	if int(total)%params.Limit() > 0 {
-		pages++
+	// 获取每个分组的账号数量
+	for i := range outGroups {
+		count, _ := r.GetAccountCount(ctx, outGroups[i].ID)
+		outGroups[i].AccountCount = count
 	}
 
-	return groups, &pagination.PaginationResult{
-		Total:    total,
-		Page:     params.Page,
-		PageSize: params.Limit(),
-		Pages:    pages,
-	}, nil
+	return outGroups, paginationResultFromTotal(total, params), nil
 }
 
-func (r *GroupRepository) ListActive(ctx context.Context) ([]model.Group, error) {
-	var groups []model.Group
-	err := r.db.WithContext(ctx).Where("status = ?", model.StatusActive).Order("id ASC").Find(&groups).Error
+func (r *groupRepository) ListActive(ctx context.Context) ([]service.Group, error) {
+	var groups []groupModel
+	err := r.db.WithContext(ctx).Where("status = ?", service.StatusActive).Order("id ASC").Find(&groups).Error
 	if err != nil {
 		return nil, err
 	}
-	// 获取每个分组的账号数量
+	outGroups := make([]service.Group, 0, len(groups))
 	for i := range groups {
-		count, _ := r.GetAccountCount(ctx, groups[i].ID)
-		groups[i].AccountCount = count
+		outGroups = append(outGroups, *groupModelToService(&groups[i]))
 	}
-	return groups, nil
+	// 获取每个分组的账号数量
+	for i := range outGroups {
+		count, _ := r.GetAccountCount(ctx, outGroups[i].ID)
+		outGroups[i].AccountCount = count
+	}
+	return outGroups, nil
 }
 
-func (r *GroupRepository) ListActiveByPlatform(ctx context.Context, platform string) ([]model.Group, error) {
-	var groups []model.Group
-	err := r.db.WithContext(ctx).Where("status = ? AND platform = ?", model.StatusActive, platform).Order("id ASC").Find(&groups).Error
+func (r *groupRepository) ListActiveByPlatform(ctx context.Context, platform string) ([]service.Group, error) {
+	var groups []groupModel
+	err := r.db.WithContext(ctx).Where("status = ? AND platform = ?", service.StatusActive, platform).Order("id ASC").Find(&groups).Error
 	if err != nil {
 		return nil, err
 	}
-	// 获取每个分组的账号数量
+	outGroups := make([]service.Group, 0, len(groups))
 	for i := range groups {
-		count, _ := r.GetAccountCount(ctx, groups[i].ID)
-		groups[i].AccountCount = count
+		outGroups = append(outGroups, *groupModelToService(&groups[i]))
 	}
-	return groups, nil
+	// 获取每个分组的账号数量
+	for i := range outGroups {
+		count, _ := r.GetAccountCount(ctx, outGroups[i].ID)
+		outGroups[i].AccountCount = count
+	}
+	return outGroups, nil
 }
 
-func (r *GroupRepository) ExistsByName(ctx context.Context, name string) (bool, error) {
+func (r *groupRepository) ExistsByName(ctx context.Context, name string) (bool, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&model.Group{}).Where("name = ?", name).Count(&count).Error
+	err := r.db.WithContext(ctx).Model(&groupModel{}).Where("name = ?", name).Count(&count).Error
 	return count > 0, err
 }
 
-func (r *GroupRepository) GetAccountCount(ctx context.Context, groupID int64) (int64, error) {
+func (r *groupRepository) GetAccountCount(ctx context.Context, groupID int64) (int64, error) {
 	var count int64
-	err := r.db.WithContext(ctx).Model(&model.AccountGroup{}).Where("group_id = ?", groupID).Count(&count).Error
+	err := r.db.WithContext(ctx).Table("account_groups").Where("group_id = ?", groupID).Count(&count).Error
 	return count, err
 }
 
 // DeleteAccountGroupsByGroupID 删除分组与账号的关联关系
-func (r *GroupRepository) DeleteAccountGroupsByGroupID(ctx context.Context, groupID int64) (int64, error) {
-	result := r.db.WithContext(ctx).Where("group_id = ?", groupID).Delete(&model.AccountGroup{})
+func (r *groupRepository) DeleteAccountGroupsByGroupID(ctx context.Context, groupID int64) (int64, error) {
+	result := r.db.WithContext(ctx).Exec("DELETE FROM account_groups WHERE group_id = ?", groupID)
 	return result.RowsAffected, result.Error
 }
 
-// DB 返回底层数据库连接，用于事务处理
-func (r *GroupRepository) DB() *gorm.DB {
-	return r.db
+func (r *groupRepository) DeleteCascade(ctx context.Context, id int64) ([]int64, error) {
+	group, err := r.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var affectedUserIDs []int64
+	if group.IsSubscriptionType() {
+		if err := r.db.WithContext(ctx).
+			Table("user_subscriptions").
+			Where("group_id = ?", id).
+			Pluck("user_id", &affectedUserIDs).Error; err != nil {
+			return nil, err
+		}
+	}
+
+	err = r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		// 1. 删除订阅类型分组的订阅记录
+		if group.IsSubscriptionType() {
+			if err := tx.Exec("DELETE FROM user_subscriptions WHERE group_id = ?", id).Error; err != nil {
+				return err
+			}
+		}
+
+		// 2. 将 api_keys 中绑定该分组的 group_id 设为 nil
+		if err := tx.Exec("UPDATE api_keys SET group_id = NULL WHERE group_id = ?", id).Error; err != nil {
+			return err
+		}
+
+		// 3. 从 users.allowed_groups 数组中移除该分组 ID
+		if err := tx.Exec(
+			"UPDATE users SET allowed_groups = array_remove(allowed_groups, ?) WHERE ? = ANY(allowed_groups)",
+			id, id,
+		).Error; err != nil {
+			return err
+		}
+
+		// 4. 删除 account_groups 中间表的数据
+		if err := tx.Exec("DELETE FROM account_groups WHERE group_id = ?", id).Error; err != nil {
+			return err
+		}
+
+		// 5. 删除分组本身（带锁，避免并发写）
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Delete(&groupModel{}, id).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return affectedUserIDs, nil
+}
+
+type groupModel struct {
+	ID             int64   `gorm:"primaryKey"`
+	Name           string  `gorm:"uniqueIndex;size:100;not null"`
+	Description    string  `gorm:"type:text"`
+	Platform       string  `gorm:"size:50;default:anthropic;not null"`
+	RateMultiplier float64 `gorm:"type:decimal(10,4);default:1.0;not null"`
+	IsExclusive    bool    `gorm:"default:false;not null"`
+	Status         string  `gorm:"size:20;default:active;not null"`
+
+	SubscriptionType string   `gorm:"size:20;default:standard;not null"`
+	DailyLimitUSD    *float64 `gorm:"type:decimal(20,8)"`
+	WeeklyLimitUSD   *float64 `gorm:"type:decimal(20,8)"`
+	MonthlyLimitUSD  *float64 `gorm:"type:decimal(20,8)"`
+
+	CreatedAt time.Time      `gorm:"not null"`
+	UpdatedAt time.Time      `gorm:"not null"`
+	DeletedAt gorm.DeletedAt `gorm:"index"`
+}
+
+func (groupModel) TableName() string { return "groups" }
+
+func groupModelToService(m *groupModel) *service.Group {
+	if m == nil {
+		return nil
+	}
+	return &service.Group{
+		ID:               m.ID,
+		Name:             m.Name,
+		Description:      m.Description,
+		Platform:         m.Platform,
+		RateMultiplier:   m.RateMultiplier,
+		IsExclusive:      m.IsExclusive,
+		Status:           m.Status,
+		SubscriptionType: m.SubscriptionType,
+		DailyLimitUSD:    m.DailyLimitUSD,
+		WeeklyLimitUSD:   m.WeeklyLimitUSD,
+		MonthlyLimitUSD:  m.MonthlyLimitUSD,
+		CreatedAt:        m.CreatedAt,
+		UpdatedAt:        m.UpdatedAt,
+	}
+}
+
+func groupModelFromService(sg *service.Group) *groupModel {
+	if sg == nil {
+		return nil
+	}
+	return &groupModel{
+		ID:               sg.ID,
+		Name:             sg.Name,
+		Description:      sg.Description,
+		Platform:         sg.Platform,
+		RateMultiplier:   sg.RateMultiplier,
+		IsExclusive:      sg.IsExclusive,
+		Status:           sg.Status,
+		SubscriptionType: sg.SubscriptionType,
+		DailyLimitUSD:    sg.DailyLimitUSD,
+		WeeklyLimitUSD:   sg.WeeklyLimitUSD,
+		MonthlyLimitUSD:  sg.MonthlyLimitUSD,
+		CreatedAt:        sg.CreatedAt,
+		UpdatedAt:        sg.UpdatedAt,
+	}
+}
+
+func applyGroupModelToService(group *service.Group, m *groupModel) {
+	if group == nil || m == nil {
+		return
+	}
+	group.ID = m.ID
+	group.CreatedAt = m.CreatedAt
+	group.UpdatedAt = m.UpdatedAt
 }

@@ -10,16 +10,20 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/claude"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/openai"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )
+
+// sseDataPrefix matches SSE data lines with optional whitespace after colon.
+// Some upstream APIs return non-standard "data:" without space (should be "data: ").
+var sseDataPrefix = regexp.MustCompile(`^data:\s*`)
 
 const (
 	testClaudeAPIURL   = "https://api.anthropic.com/v1/messages"
@@ -127,7 +131,7 @@ func (s *AccountTestService) TestAccountConnection(c *gin.Context, accountID int
 }
 
 // testClaudeAccountConnection tests an Anthropic Claude account's connection
-func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account *model.Account, modelID string) error {
+func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account *Account, modelID string) error {
 	ctx := c.Request.Context()
 
 	// Determine the model to use
@@ -254,7 +258,7 @@ func (s *AccountTestService) testClaudeAccountConnection(c *gin.Context, account
 }
 
 // testOpenAIAccountConnection tests an OpenAI account's connection
-func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account *model.Account, modelID string) error {
+func (s *AccountTestService) testOpenAIAccountConnection(c *gin.Context, account *Account, modelID string) error {
 	ctx := c.Request.Context()
 
 	// Default to openai.DefaultTestModel for OpenAI testing
@@ -412,11 +416,11 @@ func (s *AccountTestService) processClaudeStream(c *gin.Context, body io.Reader)
 		}
 
 		line = strings.TrimSpace(line)
-		if line == "" || !strings.HasPrefix(line, "data: ") {
+		if line == "" || !sseDataPrefix.MatchString(line) {
 			continue
 		}
 
-		jsonStr := strings.TrimPrefix(line, "data: ")
+		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
 		if jsonStr == "[DONE]" {
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil
@@ -466,11 +470,11 @@ func (s *AccountTestService) processOpenAIStream(c *gin.Context, body io.Reader)
 		}
 
 		line = strings.TrimSpace(line)
-		if line == "" || !strings.HasPrefix(line, "data: ") {
+		if line == "" || !sseDataPrefix.MatchString(line) {
 			continue
 		}
 
-		jsonStr := strings.TrimPrefix(line, "data: ")
+		jsonStr := sseDataPrefix.ReplaceAllString(line, "")
 		if jsonStr == "[DONE]" {
 			s.sendEvent(c, TestEvent{Type: "test_complete", Success: true})
 			return nil

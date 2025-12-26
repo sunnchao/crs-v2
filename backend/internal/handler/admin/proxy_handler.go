@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -53,11 +54,15 @@ func (h *ProxyHandler) List(c *gin.Context) {
 
 	proxies, total, err := h.adminService.ListProxies(c.Request.Context(), page, pageSize, protocol, status, search)
 	if err != nil {
-		response.InternalError(c, "Failed to list proxies: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Paginated(c, proxies, total, page, pageSize)
+	out := make([]dto.Proxy, 0, len(proxies))
+	for i := range proxies {
+		out = append(out, *dto.ProxyFromService(&proxies[i]))
+	}
+	response.Paginated(c, out, total, page, pageSize)
 }
 
 // GetAll handles getting all active proxies without pagination
@@ -69,20 +74,28 @@ func (h *ProxyHandler) GetAll(c *gin.Context) {
 	if withCount {
 		proxies, err := h.adminService.GetAllProxiesWithAccountCount(c.Request.Context())
 		if err != nil {
-			response.InternalError(c, "Failed to get proxies: "+err.Error())
+			response.ErrorFrom(c, err)
 			return
 		}
-		response.Success(c, proxies)
+		out := make([]dto.ProxyWithAccountCount, 0, len(proxies))
+		for i := range proxies {
+			out = append(out, *dto.ProxyWithAccountCountFromService(&proxies[i]))
+		}
+		response.Success(c, out)
 		return
 	}
 
 	proxies, err := h.adminService.GetAllProxies(c.Request.Context())
 	if err != nil {
-		response.InternalError(c, "Failed to get proxies: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, proxies)
+	out := make([]dto.Proxy, 0, len(proxies))
+	for i := range proxies {
+		out = append(out, *dto.ProxyFromService(&proxies[i]))
+	}
+	response.Success(c, out)
 }
 
 // GetByID handles getting a proxy by ID
@@ -96,11 +109,11 @@ func (h *ProxyHandler) GetByID(c *gin.Context) {
 
 	proxy, err := h.adminService.GetProxy(c.Request.Context(), proxyID)
 	if err != nil {
-		response.NotFound(c, "Proxy not found")
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, proxy)
+	response.Success(c, dto.ProxyFromService(proxy))
 }
 
 // Create handles creating a new proxy
@@ -121,11 +134,11 @@ func (h *ProxyHandler) Create(c *gin.Context) {
 		Password: strings.TrimSpace(req.Password),
 	})
 	if err != nil {
-		response.BadRequest(c, "Failed to create proxy: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, proxy)
+	response.Success(c, dto.ProxyFromService(proxy))
 }
 
 // Update handles updating a proxy
@@ -153,11 +166,11 @@ func (h *ProxyHandler) Update(c *gin.Context) {
 		Status:   strings.TrimSpace(req.Status),
 	})
 	if err != nil {
-		response.InternalError(c, "Failed to update proxy: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, proxy)
+	response.Success(c, dto.ProxyFromService(proxy))
 }
 
 // Delete handles deleting a proxy
@@ -171,7 +184,7 @@ func (h *ProxyHandler) Delete(c *gin.Context) {
 
 	err = h.adminService.DeleteProxy(c.Request.Context(), proxyID)
 	if err != nil {
-		response.InternalError(c, "Failed to delete proxy: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -189,7 +202,7 @@ func (h *ProxyHandler) Test(c *gin.Context) {
 
 	result, err := h.adminService.TestProxy(c.Request.Context(), proxyID)
 	if err != nil {
-		response.InternalError(c, "Failed to test proxy: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -229,11 +242,15 @@ func (h *ProxyHandler) GetProxyAccounts(c *gin.Context) {
 
 	accounts, total, err := h.adminService.GetProxyAccounts(c.Request.Context(), proxyID, page, pageSize)
 	if err != nil {
-		response.InternalError(c, "Failed to get proxy accounts: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Paginated(c, accounts, total, page, pageSize)
+	out := make([]dto.Account, 0, len(accounts))
+	for i := range accounts {
+		out = append(out, *dto.AccountFromService(&accounts[i]))
+	}
+	response.Paginated(c, out, total, page, pageSize)
 }
 
 // BatchCreateProxyItem represents a single proxy in batch create request
@@ -272,7 +289,7 @@ func (h *ProxyHandler) BatchCreate(c *gin.Context) {
 		// Check for duplicates (same host, port, username, password)
 		exists, err := h.adminService.CheckProxyExists(c.Request.Context(), host, item.Port, username, password)
 		if err != nil {
-			response.InternalError(c, "Failed to check proxy existence: "+err.Error())
+			response.ErrorFrom(c, err)
 			return
 		}
 

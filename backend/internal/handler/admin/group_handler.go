@@ -3,7 +3,7 @@ package admin
 import (
 	"strconv"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -65,11 +65,15 @@ func (h *GroupHandler) List(c *gin.Context) {
 
 	groups, total, err := h.adminService.ListGroups(c.Request.Context(), page, pageSize, platform, status, isExclusive)
 	if err != nil {
-		response.InternalError(c, "Failed to list groups: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Paginated(c, groups, total, page, pageSize)
+	outGroups := make([]dto.Group, 0, len(groups))
+	for i := range groups {
+		outGroups = append(outGroups, *dto.GroupFromService(&groups[i]))
+	}
+	response.Paginated(c, outGroups, total, page, pageSize)
 }
 
 // GetAll handles getting all active groups without pagination
@@ -77,7 +81,7 @@ func (h *GroupHandler) List(c *gin.Context) {
 func (h *GroupHandler) GetAll(c *gin.Context) {
 	platform := c.Query("platform")
 
-	var groups []model.Group
+	var groups []service.Group
 	var err error
 
 	if platform != "" {
@@ -87,11 +91,15 @@ func (h *GroupHandler) GetAll(c *gin.Context) {
 	}
 
 	if err != nil {
-		response.InternalError(c, "Failed to get groups: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, groups)
+	outGroups := make([]dto.Group, 0, len(groups))
+	for i := range groups {
+		outGroups = append(outGroups, *dto.GroupFromService(&groups[i]))
+	}
+	response.Success(c, outGroups)
 }
 
 // GetByID handles getting a group by ID
@@ -105,11 +113,11 @@ func (h *GroupHandler) GetByID(c *gin.Context) {
 
 	group, err := h.adminService.GetGroup(c.Request.Context(), groupID)
 	if err != nil {
-		response.NotFound(c, "Group not found")
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, group)
+	response.Success(c, dto.GroupFromService(group))
 }
 
 // Create handles creating a new group
@@ -133,11 +141,11 @@ func (h *GroupHandler) Create(c *gin.Context) {
 		MonthlyLimitUSD:  req.MonthlyLimitUSD,
 	})
 	if err != nil {
-		response.BadRequest(c, "Failed to create group: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, group)
+	response.Success(c, dto.GroupFromService(group))
 }
 
 // Update handles updating a group
@@ -168,11 +176,11 @@ func (h *GroupHandler) Update(c *gin.Context) {
 		MonthlyLimitUSD:  req.MonthlyLimitUSD,
 	})
 	if err != nil {
-		response.InternalError(c, "Failed to update group: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, group)
+	response.Success(c, dto.GroupFromService(group))
 }
 
 // Delete handles deleting a group
@@ -186,7 +194,7 @@ func (h *GroupHandler) Delete(c *gin.Context) {
 
 	err = h.adminService.DeleteGroup(c.Request.Context(), groupID)
 	if err != nil {
-		response.InternalError(c, "Failed to delete group: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -225,9 +233,13 @@ func (h *GroupHandler) GetGroupAPIKeys(c *gin.Context) {
 
 	keys, total, err := h.adminService.GetGroupAPIKeys(c.Request.Context(), groupID, page, pageSize)
 	if err != nil {
-		response.InternalError(c, "Failed to get group API keys: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Paginated(c, keys, total, page, pageSize)
+	outKeys := make([]dto.ApiKey, 0, len(keys))
+	for i := range keys {
+		outKeys = append(outKeys, *dto.ApiKeyFromService(&keys[i]))
+	}
+	response.Paginated(c, outKeys, total, page, pageSize)
 }

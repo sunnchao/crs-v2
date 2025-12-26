@@ -1,18 +1,21 @@
 package middleware
 
 import (
-	"context"
-	"github.com/Wei-Shaw/sub2api/internal/model"
-	"github.com/Wei-Shaw/sub2api/internal/service"
+	"errors"
 	"strings"
+
+	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
 )
 
-// JWTAuth JWT认证中间件
-func JWTAuth(authService *service.AuthService, userRepo interface {
-	GetByID(ctx context.Context, id int64) (*model.User, error)
-}) gin.HandlerFunc {
+// NewJWTAuthMiddleware 创建 JWT 认证中间件
+func NewJWTAuthMiddleware(authService *service.AuthService, userService *service.UserService) JWTAuthMiddleware {
+	return JWTAuthMiddleware(jwtAuth(authService, userService))
+}
+
+// jwtAuth JWT认证中间件实现
+func jwtAuth(authService *service.AuthService, userService *service.UserService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 从Authorization header中提取token
 		authHeader := c.GetHeader("Authorization")
@@ -37,7 +40,7 @@ func JWTAuth(authService *service.AuthService, userRepo interface {
 		// 验证token
 		claims, err := authService.ValidateToken(tokenString)
 		if err != nil {
-			if err == service.ErrTokenExpired {
+			if errors.Is(err, service.ErrTokenExpired) {
 				AbortWithError(c, 401, "TOKEN_EXPIRED", "Token has expired")
 				return
 			}
@@ -46,7 +49,7 @@ func JWTAuth(authService *service.AuthService, userRepo interface {
 		}
 
 		// 从数据库获取最新的用户信息
-		user, err := userRepo.GetByID(c.Request.Context(), claims.UserID)
+		user, err := userService.GetByID(c.Request.Context(), claims.UserID)
 		if err != nil {
 			AbortWithError(c, 401, "USER_NOT_FOUND", "User not found")
 			return
@@ -58,19 +61,14 @@ func JWTAuth(authService *service.AuthService, userRepo interface {
 			return
 		}
 
-		// 将用户信息存入上下文
-		c.Set(string(ContextKeyUser), user)
+		c.Set(string(ContextKeyUser), AuthSubject{
+			UserID:      user.ID,
+			Concurrency: user.Concurrency,
+		})
+		c.Set(string(ContextKeyUserRole), user.Role)
 
 		c.Next()
 	}
 }
 
-// GetUserFromContext 从上下文中获取用户
-func GetUserFromContext(c *gin.Context) (*model.User, bool) {
-	value, exists := c.Get(string(ContextKeyUser))
-	if !exists {
-		return nil, false
-	}
-	user, ok := value.(*model.User)
-	return user, ok
-}
+// Deprecated: prefer GetAuthSubjectFromContext in auth_subject.go.

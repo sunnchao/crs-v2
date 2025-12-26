@@ -2,31 +2,28 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/infrastructure/errors"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
-	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
 var (
-	ErrUserNotFound      = errors.New("user not found")
-	ErrPasswordIncorrect = errors.New("current password is incorrect")
-	ErrInsufficientPerms = errors.New("insufficient permissions")
+	ErrUserNotFound      = infraerrors.NotFound("USER_NOT_FOUND", "user not found")
+	ErrPasswordIncorrect = infraerrors.BadRequest("PASSWORD_INCORRECT", "current password is incorrect")
+	ErrInsufficientPerms = infraerrors.Forbidden("INSUFFICIENT_PERMISSIONS", "insufficient permissions")
 )
 
 type UserRepository interface {
-	Create(ctx context.Context, user *model.User) error
-	GetByID(ctx context.Context, id int64) (*model.User, error)
-	GetByEmail(ctx context.Context, email string) (*model.User, error)
-	GetFirstAdmin(ctx context.Context) (*model.User, error)
-	Update(ctx context.Context, user *model.User) error
+	Create(ctx context.Context, user *User) error
+	GetByID(ctx context.Context, id int64) (*User, error)
+	GetByEmail(ctx context.Context, email string) (*User, error)
+	GetFirstAdmin(ctx context.Context) (*User, error)
+	Update(ctx context.Context, user *User) error
 	Delete(ctx context.Context, id int64) error
 
-	List(ctx context.Context, params pagination.PaginationParams) ([]model.User, *pagination.PaginationResult, error)
-	ListWithFilters(ctx context.Context, params pagination.PaginationParams, status, role, search string) ([]model.User, *pagination.PaginationResult, error)
+	List(ctx context.Context, params pagination.PaginationParams) ([]User, *pagination.PaginationResult, error)
+	ListWithFilters(ctx context.Context, params pagination.PaginationParams, status, role, search string) ([]User, *pagination.PaginationResult, error)
 
 	UpdateBalance(ctx context.Context, id int64, amount float64) error
 	DeductBalance(ctx context.Context, id int64, amount float64) error
@@ -61,25 +58,28 @@ func NewUserService(userRepo UserRepository) *UserService {
 	}
 }
 
+// GetFirstAdmin 获取首个管理员用户（用于 Admin API Key 认证）
+func (s *UserService) GetFirstAdmin(ctx context.Context) (*User, error) {
+	admin, err := s.userRepo.GetFirstAdmin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("get first admin: %w", err)
+	}
+	return admin, nil
+}
+
 // GetProfile 获取用户资料
-func (s *UserService) GetProfile(ctx context.Context, userID int64) (*model.User, error) {
+func (s *UserService) GetProfile(ctx context.Context, userID int64) (*User, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrUserNotFound
-		}
 		return nil, fmt.Errorf("get user: %w", err)
 	}
 	return user, nil
 }
 
 // UpdateProfile 更新用户资料
-func (s *UserService) UpdateProfile(ctx context.Context, userID int64, req UpdateProfileRequest) (*model.User, error) {
+func (s *UserService) UpdateProfile(ctx context.Context, userID int64, req UpdateProfileRequest) (*User, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrUserNotFound
-		}
 		return nil, fmt.Errorf("get user: %w", err)
 	}
 
@@ -119,24 +119,17 @@ func (s *UserService) UpdateProfile(ctx context.Context, userID int64, req Updat
 func (s *UserService) ChangePassword(ctx context.Context, userID int64, req ChangePasswordRequest) error {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrUserNotFound
-		}
 		return fmt.Errorf("get user: %w", err)
 	}
 
 	// 验证当前密码
-	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.CurrentPassword)); err != nil {
+	if !user.CheckPassword(req.CurrentPassword) {
 		return ErrPasswordIncorrect
 	}
 
-	// 生成新密码哈希
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return fmt.Errorf("hash password: %w", err)
+	if err := user.SetPassword(req.NewPassword); err != nil {
+		return fmt.Errorf("set password: %w", err)
 	}
-
-	user.PasswordHash = string(hashedPassword)
 
 	if err := s.userRepo.Update(ctx, user); err != nil {
 		return fmt.Errorf("update user: %w", err)
@@ -146,19 +139,16 @@ func (s *UserService) ChangePassword(ctx context.Context, userID int64, req Chan
 }
 
 // GetByID 根据ID获取用户（管理员功能）
-func (s *UserService) GetByID(ctx context.Context, id int64) (*model.User, error) {
+func (s *UserService) GetByID(ctx context.Context, id int64) (*User, error) {
 	user, err := s.userRepo.GetByID(ctx, id)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrUserNotFound
-		}
 		return nil, fmt.Errorf("get user: %w", err)
 	}
 	return user, nil
 }
 
 // List 获取用户列表（管理员功能）
-func (s *UserService) List(ctx context.Context, params pagination.PaginationParams) ([]model.User, *pagination.PaginationResult, error) {
+func (s *UserService) List(ctx context.Context, params pagination.PaginationParams) ([]User, *pagination.PaginationResult, error) {
 	users, pagination, err := s.userRepo.List(ctx, params)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list users: %w", err)
@@ -178,9 +168,6 @@ func (s *UserService) UpdateBalance(ctx context.Context, userID int64, amount fl
 func (s *UserService) UpdateStatus(ctx context.Context, userID int64, status string) error {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return ErrUserNotFound
-		}
 		return fmt.Errorf("get user: %w", err)
 	}
 

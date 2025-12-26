@@ -7,63 +7,61 @@ import (
 	"log"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
-	"gorm.io/gorm"
 )
 
 // AdminService interface defines admin management operations
 type AdminService interface {
 	// User management
-	ListUsers(ctx context.Context, page, pageSize int, status, role, search string) ([]model.User, int64, error)
-	GetUser(ctx context.Context, id int64) (*model.User, error)
-	CreateUser(ctx context.Context, input *CreateUserInput) (*model.User, error)
-	UpdateUser(ctx context.Context, id int64, input *UpdateUserInput) (*model.User, error)
+	ListUsers(ctx context.Context, page, pageSize int, status, role, search string) ([]User, int64, error)
+	GetUser(ctx context.Context, id int64) (*User, error)
+	CreateUser(ctx context.Context, input *CreateUserInput) (*User, error)
+	UpdateUser(ctx context.Context, id int64, input *UpdateUserInput) (*User, error)
 	DeleteUser(ctx context.Context, id int64) error
-	UpdateUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (*model.User, error)
-	GetUserAPIKeys(ctx context.Context, userID int64, page, pageSize int) ([]model.ApiKey, int64, error)
+	UpdateUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (*User, error)
+	GetUserAPIKeys(ctx context.Context, userID int64, page, pageSize int) ([]ApiKey, int64, error)
 	GetUserUsageStats(ctx context.Context, userID int64, period string) (any, error)
 
 	// Group management
-	ListGroups(ctx context.Context, page, pageSize int, platform, status string, isExclusive *bool) ([]model.Group, int64, error)
-	GetAllGroups(ctx context.Context) ([]model.Group, error)
-	GetAllGroupsByPlatform(ctx context.Context, platform string) ([]model.Group, error)
-	GetGroup(ctx context.Context, id int64) (*model.Group, error)
-	CreateGroup(ctx context.Context, input *CreateGroupInput) (*model.Group, error)
-	UpdateGroup(ctx context.Context, id int64, input *UpdateGroupInput) (*model.Group, error)
+	ListGroups(ctx context.Context, page, pageSize int, platform, status string, isExclusive *bool) ([]Group, int64, error)
+	GetAllGroups(ctx context.Context) ([]Group, error)
+	GetAllGroupsByPlatform(ctx context.Context, platform string) ([]Group, error)
+	GetGroup(ctx context.Context, id int64) (*Group, error)
+	CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error)
+	UpdateGroup(ctx context.Context, id int64, input *UpdateGroupInput) (*Group, error)
 	DeleteGroup(ctx context.Context, id int64) error
-	GetGroupAPIKeys(ctx context.Context, groupID int64, page, pageSize int) ([]model.ApiKey, int64, error)
+	GetGroupAPIKeys(ctx context.Context, groupID int64, page, pageSize int) ([]ApiKey, int64, error)
 
 	// Account management
-	ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string) ([]model.Account, int64, error)
-	GetAccount(ctx context.Context, id int64) (*model.Account, error)
-	CreateAccount(ctx context.Context, input *CreateAccountInput) (*model.Account, error)
-	UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*model.Account, error)
+	ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string) ([]Account, int64, error)
+	GetAccount(ctx context.Context, id int64) (*Account, error)
+	CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error)
+	UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error)
 	DeleteAccount(ctx context.Context, id int64) error
-	RefreshAccountCredentials(ctx context.Context, id int64) (*model.Account, error)
-	ClearAccountError(ctx context.Context, id int64) (*model.Account, error)
-	SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*model.Account, error)
+	RefreshAccountCredentials(ctx context.Context, id int64) (*Account, error)
+	ClearAccountError(ctx context.Context, id int64) (*Account, error)
+	SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*Account, error)
 	BulkUpdateAccounts(ctx context.Context, input *BulkUpdateAccountsInput) (*BulkUpdateAccountsResult, error)
 
 	// Proxy management
-	ListProxies(ctx context.Context, page, pageSize int, protocol, status, search string) ([]model.Proxy, int64, error)
-	GetAllProxies(ctx context.Context) ([]model.Proxy, error)
-	GetAllProxiesWithAccountCount(ctx context.Context) ([]model.ProxyWithAccountCount, error)
-	GetProxy(ctx context.Context, id int64) (*model.Proxy, error)
-	CreateProxy(ctx context.Context, input *CreateProxyInput) (*model.Proxy, error)
-	UpdateProxy(ctx context.Context, id int64, input *UpdateProxyInput) (*model.Proxy, error)
+	ListProxies(ctx context.Context, page, pageSize int, protocol, status, search string) ([]Proxy, int64, error)
+	GetAllProxies(ctx context.Context) ([]Proxy, error)
+	GetAllProxiesWithAccountCount(ctx context.Context) ([]ProxyWithAccountCount, error)
+	GetProxy(ctx context.Context, id int64) (*Proxy, error)
+	CreateProxy(ctx context.Context, input *CreateProxyInput) (*Proxy, error)
+	UpdateProxy(ctx context.Context, id int64, input *UpdateProxyInput) (*Proxy, error)
 	DeleteProxy(ctx context.Context, id int64) error
-	GetProxyAccounts(ctx context.Context, proxyID int64, page, pageSize int) ([]model.Account, int64, error)
+	GetProxyAccounts(ctx context.Context, proxyID int64, page, pageSize int) ([]Account, int64, error)
 	CheckProxyExists(ctx context.Context, host string, port int, username, password string) (bool, error)
 	TestProxy(ctx context.Context, id int64) (*ProxyTestResult, error)
 
 	// Redeem code management
-	ListRedeemCodes(ctx context.Context, page, pageSize int, codeType, status, search string) ([]model.RedeemCode, int64, error)
-	GetRedeemCode(ctx context.Context, id int64) (*model.RedeemCode, error)
-	GenerateRedeemCodes(ctx context.Context, input *GenerateRedeemCodesInput) ([]model.RedeemCode, error)
+	ListRedeemCodes(ctx context.Context, page, pageSize int, codeType, status, search string) ([]RedeemCode, int64, error)
+	GetRedeemCode(ctx context.Context, id int64) (*RedeemCode, error)
+	GenerateRedeemCodes(ctx context.Context, input *GenerateRedeemCodesInput) ([]RedeemCode, error)
 	DeleteRedeemCode(ctx context.Context, id int64) error
 	BatchDeleteRedeemCodes(ctx context.Context, ids []int64) (int64, error)
-	ExpireRedeemCode(ctx context.Context, id int64) (*model.RedeemCode, error)
+	ExpireRedeemCode(ctx context.Context, id int64) (*RedeemCode, error)
 }
 
 // Input types for admin operations
@@ -253,7 +251,7 @@ func NewAdminService(
 }
 
 // User management implementations
-func (s *adminServiceImpl) ListUsers(ctx context.Context, page, pageSize int, status, role, search string) ([]model.User, int64, error) {
+func (s *adminServiceImpl) ListUsers(ctx context.Context, page, pageSize int, status, role, search string) ([]User, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	users, result, err := s.userRepo.ListWithFilters(ctx, params, status, role, search)
 	if err != nil {
@@ -262,20 +260,21 @@ func (s *adminServiceImpl) ListUsers(ctx context.Context, page, pageSize int, st
 	return users, result.Total, nil
 }
 
-func (s *adminServiceImpl) GetUser(ctx context.Context, id int64) (*model.User, error) {
+func (s *adminServiceImpl) GetUser(ctx context.Context, id int64) (*User, error) {
 	return s.userRepo.GetByID(ctx, id)
 }
 
-func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInput) (*model.User, error) {
-	user := &model.User{
-		Email:       input.Email,
-		Username:    input.Username,
-		Wechat:      input.Wechat,
-		Notes:       input.Notes,
-		Role:        "user", // Always create as regular user, never admin
-		Balance:     input.Balance,
-		Concurrency: input.Concurrency,
-		Status:      model.StatusActive,
+func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInput) (*User, error) {
+	user := &User{
+		Email:         input.Email,
+		Username:      input.Username,
+		Wechat:        input.Wechat,
+		Notes:         input.Notes,
+		Role:          RoleUser, // Always create as regular user, never admin
+		Balance:       input.Balance,
+		Concurrency:   input.Concurrency,
+		Status:        StatusActive,
+		AllowedGroups: input.AllowedGroups,
 	}
 	if err := user.SetPassword(input.Password); err != nil {
 		return nil, err
@@ -286,7 +285,7 @@ func (s *adminServiceImpl) CreateUser(ctx context.Context, input *CreateUserInpu
 	return user, nil
 }
 
-func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *UpdateUserInput) (*model.User, error) {
+func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *UpdateUserInput) (*User, error) {
 	user, err := s.userRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -336,16 +335,16 @@ func (s *adminServiceImpl) UpdateUser(ctx context.Context, id int64, input *Upda
 
 	concurrencyDiff := user.Concurrency - oldConcurrency
 	if concurrencyDiff != 0 {
-		code, err := model.GenerateRedeemCode()
+		code, err := GenerateRedeemCode()
 		if err != nil {
 			log.Printf("failed to generate adjustment redeem code: %v", err)
 			return user, nil
 		}
-		adjustmentRecord := &model.RedeemCode{
+		adjustmentRecord := &RedeemCode{
 			Code:   code,
-			Type:   model.AdjustmentTypeAdminConcurrency,
+			Type:   AdjustmentTypeAdminConcurrency,
 			Value:  float64(concurrencyDiff),
-			Status: model.StatusUsed,
+			Status: StatusUsed,
 			UsedBy: &user.ID,
 		}
 		now := time.Now()
@@ -370,7 +369,7 @@ func (s *adminServiceImpl) DeleteUser(ctx context.Context, id int64) error {
 	return s.userRepo.Delete(ctx, id)
 }
 
-func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (*model.User, error) {
+func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, balance float64, operation string, notes string) (*User, error) {
 	user, err := s.userRepo.GetByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -407,17 +406,17 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 
 	balanceDiff := user.Balance - oldBalance
 	if balanceDiff != 0 {
-		code, err := model.GenerateRedeemCode()
+		code, err := GenerateRedeemCode()
 		if err != nil {
 			log.Printf("failed to generate adjustment redeem code: %v", err)
 			return user, nil
 		}
 
-		adjustmentRecord := &model.RedeemCode{
+		adjustmentRecord := &RedeemCode{
 			Code:   code,
-			Type:   model.AdjustmentTypeAdminBalance,
+			Type:   AdjustmentTypeAdminBalance,
 			Value:  balanceDiff,
-			Status: model.StatusUsed,
+			Status: StatusUsed,
 			UsedBy: &user.ID,
 			Notes:  notes,
 		}
@@ -432,7 +431,7 @@ func (s *adminServiceImpl) UpdateUserBalance(ctx context.Context, userID int64, 
 	return user, nil
 }
 
-func (s *adminServiceImpl) GetUserAPIKeys(ctx context.Context, userID int64, page, pageSize int) ([]model.ApiKey, int64, error) {
+func (s *adminServiceImpl) GetUserAPIKeys(ctx context.Context, userID int64, page, pageSize int) ([]ApiKey, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	keys, result, err := s.apiKeyRepo.ListByUserID(ctx, userID, params)
 	if err != nil {
@@ -453,7 +452,7 @@ func (s *adminServiceImpl) GetUserUsageStats(ctx context.Context, userID int64, 
 }
 
 // Group management implementations
-func (s *adminServiceImpl) ListGroups(ctx context.Context, page, pageSize int, platform, status string, isExclusive *bool) ([]model.Group, int64, error) {
+func (s *adminServiceImpl) ListGroups(ctx context.Context, page, pageSize int, platform, status string, isExclusive *bool) ([]Group, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	groups, result, err := s.groupRepo.ListWithFilters(ctx, params, platform, status, isExclusive)
 	if err != nil {
@@ -462,36 +461,36 @@ func (s *adminServiceImpl) ListGroups(ctx context.Context, page, pageSize int, p
 	return groups, result.Total, nil
 }
 
-func (s *adminServiceImpl) GetAllGroups(ctx context.Context) ([]model.Group, error) {
+func (s *adminServiceImpl) GetAllGroups(ctx context.Context) ([]Group, error) {
 	return s.groupRepo.ListActive(ctx)
 }
 
-func (s *adminServiceImpl) GetAllGroupsByPlatform(ctx context.Context, platform string) ([]model.Group, error) {
+func (s *adminServiceImpl) GetAllGroupsByPlatform(ctx context.Context, platform string) ([]Group, error) {
 	return s.groupRepo.ListActiveByPlatform(ctx, platform)
 }
 
-func (s *adminServiceImpl) GetGroup(ctx context.Context, id int64) (*model.Group, error) {
+func (s *adminServiceImpl) GetGroup(ctx context.Context, id int64) (*Group, error) {
 	return s.groupRepo.GetByID(ctx, id)
 }
 
-func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupInput) (*model.Group, error) {
+func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupInput) (*Group, error) {
 	platform := input.Platform
 	if platform == "" {
-		platform = model.PlatformAnthropic
+		platform = PlatformAnthropic
 	}
 
 	subscriptionType := input.SubscriptionType
 	if subscriptionType == "" {
-		subscriptionType = model.SubscriptionTypeStandard
+		subscriptionType = SubscriptionTypeStandard
 	}
 
-	group := &model.Group{
+	group := &Group{
 		Name:             input.Name,
 		Description:      input.Description,
 		Platform:         platform,
 		RateMultiplier:   input.RateMultiplier,
 		IsExclusive:      input.IsExclusive,
-		Status:           model.StatusActive,
+		Status:           StatusActive,
 		SubscriptionType: subscriptionType,
 		DailyLimitUSD:    input.DailyLimitUSD,
 		WeeklyLimitUSD:   input.WeeklyLimitUSD,
@@ -503,7 +502,7 @@ func (s *adminServiceImpl) CreateGroup(ctx context.Context, input *CreateGroupIn
 	return group, nil
 }
 
-func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *UpdateGroupInput) (*model.Group, error) {
+func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *UpdateGroupInput) (*Group, error) {
 	group, err := s.groupRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -550,61 +549,7 @@ func (s *adminServiceImpl) UpdateGroup(ctx context.Context, id int64, input *Upd
 }
 
 func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
-	// 先获取分组信息，检查是否存在
-	group, err := s.groupRepo.GetByID(ctx, id)
-	if err != nil {
-		return fmt.Errorf("group not found: %w", err)
-	}
-
-	// 订阅类型分组：先获取受影响的用户ID列表（用于事务后失效缓存）
-	var affectedUserIDs []int64
-	if group.IsSubscriptionType() && s.billingCacheService != nil {
-		var subscriptions []model.UserSubscription
-		if err := s.groupRepo.DB().WithContext(ctx).
-			Where("group_id = ?", id).
-			Select("user_id").
-			Find(&subscriptions).Error; err == nil {
-			for _, sub := range subscriptions {
-				affectedUserIDs = append(affectedUserIDs, sub.UserID)
-			}
-		}
-	}
-
-	// 使用事务处理所有级联删除
-	db := s.groupRepo.DB()
-	err = db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		// 1. 如果是订阅类型分组，删除 user_subscriptions 中的相关记录
-		if group.IsSubscriptionType() {
-			if err := tx.Where("group_id = ?", id).Delete(&model.UserSubscription{}).Error; err != nil {
-				return fmt.Errorf("delete user subscriptions: %w", err)
-			}
-		}
-
-		// 2. 将 api_keys 中绑定该分组的 group_id 设为 nil（任何类型的分组都需要）
-		if err := tx.Model(&model.ApiKey{}).Where("group_id = ?", id).Update("group_id", nil).Error; err != nil {
-			return fmt.Errorf("clear api key group_id: %w", err)
-		}
-
-		// 3. 从 users.allowed_groups 数组中移除该分组 ID
-		if err := tx.Model(&model.User{}).
-			Where("? = ANY(allowed_groups)", id).
-			Update("allowed_groups", gorm.Expr("array_remove(allowed_groups, ?)", id)).Error; err != nil {
-			return fmt.Errorf("remove from allowed_groups: %w", err)
-		}
-
-		// 4. 删除 account_groups 中间表的数据
-		if err := tx.Where("group_id = ?", id).Delete(&model.AccountGroup{}).Error; err != nil {
-			return fmt.Errorf("delete account groups: %w", err)
-		}
-
-		// 5. 删除分组本身
-		if err := tx.Delete(&model.Group{}, id).Error; err != nil {
-			return fmt.Errorf("delete group: %w", err)
-		}
-
-		return nil
-	})
-
+	affectedUserIDs, err := s.groupRepo.DeleteCascade(ctx, id)
 	if err != nil {
 		return err
 	}
@@ -626,7 +571,7 @@ func (s *adminServiceImpl) DeleteGroup(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (s *adminServiceImpl) GetGroupAPIKeys(ctx context.Context, groupID int64, page, pageSize int) ([]model.ApiKey, int64, error) {
+func (s *adminServiceImpl) GetGroupAPIKeys(ctx context.Context, groupID int64, page, pageSize int) ([]ApiKey, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	keys, result, err := s.apiKeyRepo.ListByGroupID(ctx, groupID, params)
 	if err != nil {
@@ -636,7 +581,7 @@ func (s *adminServiceImpl) GetGroupAPIKeys(ctx context.Context, groupID int64, p
 }
 
 // Account management implementations
-func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string) ([]model.Account, int64, error) {
+func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int, platform, accountType, status, search string) ([]Account, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	accounts, result, err := s.accountRepo.ListWithFilters(ctx, params, platform, accountType, status, search)
 	if err != nil {
@@ -645,21 +590,21 @@ func (s *adminServiceImpl) ListAccounts(ctx context.Context, page, pageSize int,
 	return accounts, result.Total, nil
 }
 
-func (s *adminServiceImpl) GetAccount(ctx context.Context, id int64) (*model.Account, error) {
+func (s *adminServiceImpl) GetAccount(ctx context.Context, id int64) (*Account, error) {
 	return s.accountRepo.GetByID(ctx, id)
 }
 
-func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*model.Account, error) {
-	account := &model.Account{
+func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccountInput) (*Account, error) {
+	account := &Account{
 		Name:        input.Name,
 		Platform:    input.Platform,
 		Type:        input.Type,
-		Credentials: model.JSONB(input.Credentials),
-		Extra:       model.JSONB(input.Extra),
+		Credentials: input.Credentials,
+		Extra:       input.Extra,
 		ProxyID:     input.ProxyID,
 		Concurrency: input.Concurrency,
 		Priority:    input.Priority,
-		Status:      model.StatusActive,
+		Status:      StatusActive,
 	}
 	if err := s.accountRepo.Create(ctx, account); err != nil {
 		return nil, err
@@ -673,7 +618,7 @@ func (s *adminServiceImpl) CreateAccount(ctx context.Context, input *CreateAccou
 	return account, nil
 }
 
-func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*model.Account, error) {
+func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *UpdateAccountInput) (*Account, error) {
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -686,13 +631,14 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		account.Type = input.Type
 	}
 	if len(input.Credentials) > 0 {
-		account.Credentials = model.JSONB(input.Credentials)
+		account.Credentials = input.Credentials
 	}
 	if len(input.Extra) > 0 {
-		account.Extra = model.JSONB(input.Extra)
+		account.Extra = input.Extra
 	}
 	if input.ProxyID != nil {
 		account.ProxyID = input.ProxyID
+		account.Proxy = nil // 清除关联对象，防止 GORM Save 时根据 Proxy.ID 覆盖 ProxyID
 	}
 	// 只在指针非 nil 时更新 Concurrency（支持设置为 0）
 	if input.Concurrency != nil {
@@ -717,7 +663,8 @@ func (s *adminServiceImpl) UpdateAccount(ctx context.Context, id int64, input *U
 		}
 	}
 
-	return account, nil
+	// 重新查询以确保返回完整数据（包括正确的 Proxy 关联对象）
+	return s.accountRepo.GetByID(ctx, id)
 }
 
 // BulkUpdateAccounts updates multiple accounts in one request.
@@ -783,7 +730,7 @@ func (s *adminServiceImpl) DeleteAccount(ctx context.Context, id int64) error {
 	return s.accountRepo.Delete(ctx, id)
 }
 
-func (s *adminServiceImpl) RefreshAccountCredentials(ctx context.Context, id int64) (*model.Account, error) {
+func (s *adminServiceImpl) RefreshAccountCredentials(ctx context.Context, id int64) (*Account, error) {
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -792,12 +739,12 @@ func (s *adminServiceImpl) RefreshAccountCredentials(ctx context.Context, id int
 	return account, nil
 }
 
-func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*model.Account, error) {
+func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*Account, error) {
 	account, err := s.accountRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	account.Status = model.StatusActive
+	account.Status = StatusActive
 	account.ErrorMessage = ""
 	if err := s.accountRepo.Update(ctx, account); err != nil {
 		return nil, err
@@ -805,7 +752,7 @@ func (s *adminServiceImpl) ClearAccountError(ctx context.Context, id int64) (*mo
 	return account, nil
 }
 
-func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*model.Account, error) {
+func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, schedulable bool) (*Account, error) {
 	if err := s.accountRepo.SetSchedulable(ctx, id, schedulable); err != nil {
 		return nil, err
 	}
@@ -813,7 +760,7 @@ func (s *adminServiceImpl) SetAccountSchedulable(ctx context.Context, id int64, 
 }
 
 // Proxy management implementations
-func (s *adminServiceImpl) ListProxies(ctx context.Context, page, pageSize int, protocol, status, search string) ([]model.Proxy, int64, error) {
+func (s *adminServiceImpl) ListProxies(ctx context.Context, page, pageSize int, protocol, status, search string) ([]Proxy, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	proxies, result, err := s.proxyRepo.ListWithFilters(ctx, params, protocol, status, search)
 	if err != nil {
@@ -822,27 +769,27 @@ func (s *adminServiceImpl) ListProxies(ctx context.Context, page, pageSize int, 
 	return proxies, result.Total, nil
 }
 
-func (s *adminServiceImpl) GetAllProxies(ctx context.Context) ([]model.Proxy, error) {
+func (s *adminServiceImpl) GetAllProxies(ctx context.Context) ([]Proxy, error) {
 	return s.proxyRepo.ListActive(ctx)
 }
 
-func (s *adminServiceImpl) GetAllProxiesWithAccountCount(ctx context.Context) ([]model.ProxyWithAccountCount, error) {
+func (s *adminServiceImpl) GetAllProxiesWithAccountCount(ctx context.Context) ([]ProxyWithAccountCount, error) {
 	return s.proxyRepo.ListActiveWithAccountCount(ctx)
 }
 
-func (s *adminServiceImpl) GetProxy(ctx context.Context, id int64) (*model.Proxy, error) {
+func (s *adminServiceImpl) GetProxy(ctx context.Context, id int64) (*Proxy, error) {
 	return s.proxyRepo.GetByID(ctx, id)
 }
 
-func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyInput) (*model.Proxy, error) {
-	proxy := &model.Proxy{
+func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyInput) (*Proxy, error) {
+	proxy := &Proxy{
 		Name:     input.Name,
 		Protocol: input.Protocol,
 		Host:     input.Host,
 		Port:     input.Port,
 		Username: input.Username,
 		Password: input.Password,
-		Status:   model.StatusActive,
+		Status:   StatusActive,
 	}
 	if err := s.proxyRepo.Create(ctx, proxy); err != nil {
 		return nil, err
@@ -850,7 +797,7 @@ func (s *adminServiceImpl) CreateProxy(ctx context.Context, input *CreateProxyIn
 	return proxy, nil
 }
 
-func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *UpdateProxyInput) (*model.Proxy, error) {
+func (s *adminServiceImpl) UpdateProxy(ctx context.Context, id int64, input *UpdateProxyInput) (*Proxy, error) {
 	proxy, err := s.proxyRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
@@ -888,9 +835,9 @@ func (s *adminServiceImpl) DeleteProxy(ctx context.Context, id int64) error {
 	return s.proxyRepo.Delete(ctx, id)
 }
 
-func (s *adminServiceImpl) GetProxyAccounts(ctx context.Context, proxyID int64, page, pageSize int) ([]model.Account, int64, error) {
+func (s *adminServiceImpl) GetProxyAccounts(ctx context.Context, proxyID int64, page, pageSize int) ([]Account, int64, error) {
 	// Return mock data for now - would need a dedicated repository method
-	return []model.Account{}, 0, nil
+	return []Account{}, 0, nil
 }
 
 func (s *adminServiceImpl) CheckProxyExists(ctx context.Context, host string, port int, username, password string) (bool, error) {
@@ -898,7 +845,7 @@ func (s *adminServiceImpl) CheckProxyExists(ctx context.Context, host string, po
 }
 
 // Redeem code management implementations
-func (s *adminServiceImpl) ListRedeemCodes(ctx context.Context, page, pageSize int, codeType, status, search string) ([]model.RedeemCode, int64, error) {
+func (s *adminServiceImpl) ListRedeemCodes(ctx context.Context, page, pageSize int, codeType, status, search string) ([]RedeemCode, int64, error) {
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
 	codes, result, err := s.redeemCodeRepo.ListWithFilters(ctx, params, codeType, status, search)
 	if err != nil {
@@ -907,13 +854,13 @@ func (s *adminServiceImpl) ListRedeemCodes(ctx context.Context, page, pageSize i
 	return codes, result.Total, nil
 }
 
-func (s *adminServiceImpl) GetRedeemCode(ctx context.Context, id int64) (*model.RedeemCode, error) {
+func (s *adminServiceImpl) GetRedeemCode(ctx context.Context, id int64) (*RedeemCode, error) {
 	return s.redeemCodeRepo.GetByID(ctx, id)
 }
 
-func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *GenerateRedeemCodesInput) ([]model.RedeemCode, error) {
+func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *GenerateRedeemCodesInput) ([]RedeemCode, error) {
 	// 如果是订阅类型，验证必须有 GroupID
-	if input.Type == model.RedeemTypeSubscription {
+	if input.Type == RedeemTypeSubscription {
 		if input.GroupID == nil {
 			return nil, errors.New("group_id is required for subscription type")
 		}
@@ -927,20 +874,20 @@ func (s *adminServiceImpl) GenerateRedeemCodes(ctx context.Context, input *Gener
 		}
 	}
 
-	codes := make([]model.RedeemCode, 0, input.Count)
+	codes := make([]RedeemCode, 0, input.Count)
 	for i := 0; i < input.Count; i++ {
-		codeValue, err := model.GenerateRedeemCode()
+		codeValue, err := GenerateRedeemCode()
 		if err != nil {
 			return nil, err
 		}
-		code := model.RedeemCode{
+		code := RedeemCode{
 			Code:   codeValue,
 			Type:   input.Type,
 			Value:  input.Value,
-			Status: model.StatusUnused,
+			Status: StatusUnused,
 		}
 		// 订阅类型专用字段
-		if input.Type == model.RedeemTypeSubscription {
+		if input.Type == RedeemTypeSubscription {
 			code.GroupID = input.GroupID
 			code.ValidityDays = input.ValidityDays
 			if code.ValidityDays <= 0 {
@@ -969,12 +916,12 @@ func (s *adminServiceImpl) BatchDeleteRedeemCodes(ctx context.Context, ids []int
 	return deleted, nil
 }
 
-func (s *adminServiceImpl) ExpireRedeemCode(ctx context.Context, id int64) (*model.RedeemCode, error) {
+func (s *adminServiceImpl) ExpireRedeemCode(ctx context.Context, id int64) (*RedeemCode, error) {
 	code, err := s.redeemCodeRepo.GetByID(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	code.Status = model.StatusExpired
+	code.Status = StatusExpired
 	if err := s.redeemCodeRepo.Update(ctx, code); err != nil {
 		return nil, err
 	}

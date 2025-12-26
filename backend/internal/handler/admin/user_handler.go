@@ -3,6 +3,7 @@ package admin
 import (
 	"strconv"
 
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -64,11 +65,15 @@ func (h *UserHandler) List(c *gin.Context) {
 
 	users, total, err := h.adminService.ListUsers(c.Request.Context(), page, pageSize, status, role, search)
 	if err != nil {
-		response.InternalError(c, "Failed to list users: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Paginated(c, users, total, page, pageSize)
+	out := make([]dto.User, 0, len(users))
+	for i := range users {
+		out = append(out, *dto.UserFromService(&users[i]))
+	}
+	response.Paginated(c, out, total, page, pageSize)
 }
 
 // GetByID handles getting a user by ID
@@ -82,11 +87,11 @@ func (h *UserHandler) GetByID(c *gin.Context) {
 
 	user, err := h.adminService.GetUser(c.Request.Context(), userID)
 	if err != nil {
-		response.NotFound(c, "User not found")
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, user)
+	response.Success(c, dto.UserFromService(user))
 }
 
 // Create handles creating a new user
@@ -109,11 +114,11 @@ func (h *UserHandler) Create(c *gin.Context) {
 		AllowedGroups: req.AllowedGroups,
 	})
 	if err != nil {
-		response.BadRequest(c, "Failed to create user: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, user)
+	response.Success(c, dto.UserFromService(user))
 }
 
 // Update handles updating a user
@@ -144,11 +149,11 @@ func (h *UserHandler) Update(c *gin.Context) {
 		AllowedGroups: req.AllowedGroups,
 	})
 	if err != nil {
-		response.InternalError(c, "Failed to update user: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, user)
+	response.Success(c, dto.UserFromService(user))
 }
 
 // Delete handles deleting a user
@@ -162,7 +167,7 @@ func (h *UserHandler) Delete(c *gin.Context) {
 
 	err = h.adminService.DeleteUser(c.Request.Context(), userID)
 	if err != nil {
-		response.InternalError(c, "Failed to delete user: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -186,11 +191,11 @@ func (h *UserHandler) UpdateBalance(c *gin.Context) {
 
 	user, err := h.adminService.UpdateUserBalance(c.Request.Context(), userID, req.Balance, req.Operation, req.Notes)
 	if err != nil {
-		response.InternalError(c, "Failed to update balance: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, user)
+	response.Success(c, dto.UserFromService(user))
 }
 
 // GetUserAPIKeys handles getting user's API keys
@@ -206,11 +211,15 @@ func (h *UserHandler) GetUserAPIKeys(c *gin.Context) {
 
 	keys, total, err := h.adminService.GetUserAPIKeys(c.Request.Context(), userID, page, pageSize)
 	if err != nil {
-		response.InternalError(c, "Failed to get user API keys: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Paginated(c, keys, total, page, pageSize)
+	out := make([]dto.ApiKey, 0, len(keys))
+	for i := range keys {
+		out = append(out, *dto.ApiKeyFromService(&keys[i]))
+	}
+	response.Paginated(c, out, total, page, pageSize)
 }
 
 // GetUserUsage handles getting user's usage statistics
@@ -226,7 +235,7 @@ func (h *UserHandler) GetUserUsage(c *gin.Context) {
 
 	stats, err := h.adminService.GetUserUsageStats(c.Request.Context(), userID, period)
 	if err != nil {
-		response.InternalError(c, "Failed to get user usage: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 

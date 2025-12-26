@@ -1,7 +1,7 @@
 package admin
 
 import (
-	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
@@ -27,11 +27,32 @@ func NewSettingHandler(settingService *service.SettingService, emailService *ser
 func (h *SettingHandler) GetSettings(c *gin.Context) {
 	settings, err := h.settingService.GetAllSettings(c.Request.Context())
 	if err != nil {
-		response.InternalError(c, "Failed to get settings: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, settings)
+	response.Success(c, dto.SystemSettings{
+		RegistrationEnabled: settings.RegistrationEnabled,
+		EmailVerifyEnabled:  settings.EmailVerifyEnabled,
+		SmtpHost:            settings.SmtpHost,
+		SmtpPort:            settings.SmtpPort,
+		SmtpUsername:        settings.SmtpUsername,
+		SmtpPassword:        settings.SmtpPassword,
+		SmtpFrom:            settings.SmtpFrom,
+		SmtpFromName:        settings.SmtpFromName,
+		SmtpUseTLS:          settings.SmtpUseTLS,
+		TurnstileEnabled:    settings.TurnstileEnabled,
+		TurnstileSiteKey:    settings.TurnstileSiteKey,
+		TurnstileSecretKey:  settings.TurnstileSecretKey,
+		SiteName:            settings.SiteName,
+		SiteLogo:            settings.SiteLogo,
+		SiteSubtitle:        settings.SiteSubtitle,
+		ApiBaseUrl:          settings.ApiBaseUrl,
+		ContactInfo:         settings.ContactInfo,
+		DocUrl:              settings.DocUrl,
+		DefaultConcurrency:  settings.DefaultConcurrency,
+		DefaultBalance:      settings.DefaultBalance,
+	})
 }
 
 // UpdateSettingsRequest 更新设置请求
@@ -87,7 +108,7 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 		req.SmtpPort = 587
 	}
 
-	settings := &model.SystemSettings{
+	settings := &service.SystemSettings{
 		RegistrationEnabled: req.RegistrationEnabled,
 		EmailVerifyEnabled:  req.EmailVerifyEnabled,
 		SmtpHost:            req.SmtpHost,
@@ -111,18 +132,39 @@ func (h *SettingHandler) UpdateSettings(c *gin.Context) {
 	}
 
 	if err := h.settingService.UpdateSettings(c.Request.Context(), settings); err != nil {
-		response.InternalError(c, "Failed to update settings: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
 	// 重新获取设置返回
 	updatedSettings, err := h.settingService.GetAllSettings(c.Request.Context())
 	if err != nil {
-		response.InternalError(c, "Failed to get updated settings: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, updatedSettings)
+	response.Success(c, dto.SystemSettings{
+		RegistrationEnabled: updatedSettings.RegistrationEnabled,
+		EmailVerifyEnabled:  updatedSettings.EmailVerifyEnabled,
+		SmtpHost:            updatedSettings.SmtpHost,
+		SmtpPort:            updatedSettings.SmtpPort,
+		SmtpUsername:        updatedSettings.SmtpUsername,
+		SmtpPassword:        updatedSettings.SmtpPassword,
+		SmtpFrom:            updatedSettings.SmtpFrom,
+		SmtpFromName:        updatedSettings.SmtpFromName,
+		SmtpUseTLS:          updatedSettings.SmtpUseTLS,
+		TurnstileEnabled:    updatedSettings.TurnstileEnabled,
+		TurnstileSiteKey:    updatedSettings.TurnstileSiteKey,
+		TurnstileSecretKey:  updatedSettings.TurnstileSecretKey,
+		SiteName:            updatedSettings.SiteName,
+		SiteLogo:            updatedSettings.SiteLogo,
+		SiteSubtitle:        updatedSettings.SiteSubtitle,
+		ApiBaseUrl:          updatedSettings.ApiBaseUrl,
+		ContactInfo:         updatedSettings.ContactInfo,
+		DocUrl:              updatedSettings.DocUrl,
+		DefaultConcurrency:  updatedSettings.DefaultConcurrency,
+		DefaultBalance:      updatedSettings.DefaultBalance,
+	})
 }
 
 // TestSmtpRequest 测试SMTP连接请求
@@ -166,7 +208,7 @@ func (h *SettingHandler) TestSmtpConnection(c *gin.Context) {
 
 	err := h.emailService.TestSmtpConnectionWithConfig(config)
 	if err != nil {
-		response.BadRequest(c, "SMTP connection test failed: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -252,7 +294,7 @@ func (h *SettingHandler) SendTestEmail(c *gin.Context) {
 `
 
 	if err := h.emailService.SendEmailWithConfig(config, req.Email, subject, body); err != nil {
-		response.BadRequest(c, "Failed to send test email: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -264,7 +306,7 @@ func (h *SettingHandler) SendTestEmail(c *gin.Context) {
 func (h *SettingHandler) GetAdminApiKey(c *gin.Context) {
 	maskedKey, exists, err := h.settingService.GetAdminApiKeyStatus(c.Request.Context())
 	if err != nil {
-		response.InternalError(c, "Failed to get admin API key status: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -279,7 +321,7 @@ func (h *SettingHandler) GetAdminApiKey(c *gin.Context) {
 func (h *SettingHandler) RegenerateAdminApiKey(c *gin.Context) {
 	key, err := h.settingService.GenerateAdminApiKey(c.Request.Context())
 	if err != nil {
-		response.InternalError(c, "Failed to generate admin API key: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -292,7 +334,7 @@ func (h *SettingHandler) RegenerateAdminApiKey(c *gin.Context) {
 // DELETE /api/v1/admin/settings/admin-api-key
 func (h *SettingHandler) DeleteAdminApiKey(c *gin.Context) {
 	if err := h.settingService.DeleteAdminApiKey(c.Request.Context()); err != nil {
-		response.InternalError(c, "Failed to delete admin API key: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 

@@ -4,10 +4,11 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/pagination"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/timezone"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -30,15 +31,9 @@ func NewUsageHandler(usageService *service.UsageService, apiKeyService *service.
 // List handles listing usage records with pagination
 // GET /api/v1/usage
 func (h *UsageHandler) List(c *gin.Context) {
-	userValue, exists := c.Get("user")
-	if !exists {
-		response.Unauthorized(c, "User not authenticated")
-		return
-	}
-
-	user, ok := userValue.(*model.User)
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
-		response.InternalError(c, "Invalid user context")
+		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
@@ -55,10 +50,10 @@ func (h *UsageHandler) List(c *gin.Context) {
 		// [Security Fix] Verify API Key ownership to prevent horizontal privilege escalation
 		apiKey, err := h.apiKeyService.GetByID(c.Request.Context(), id)
 		if err != nil {
-			response.NotFound(c, "API key not found")
+			response.ErrorFrom(c, err)
 			return
 		}
-		if apiKey.UserID != user.ID {
+		if apiKey.UserID != subject.UserID {
 			response.Forbidden(c, "Not authorized to access this API key's usage records")
 			return
 		}
@@ -67,35 +62,33 @@ func (h *UsageHandler) List(c *gin.Context) {
 	}
 
 	params := pagination.PaginationParams{Page: page, PageSize: pageSize}
-	var records []model.UsageLog
+	var records []service.UsageLog
 	var result *pagination.PaginationResult
 	var err error
 
 	if apiKeyID > 0 {
 		records, result, err = h.usageService.ListByApiKey(c.Request.Context(), apiKeyID, params)
 	} else {
-		records, result, err = h.usageService.ListByUser(c.Request.Context(), user.ID, params)
+		records, result, err = h.usageService.ListByUser(c.Request.Context(), subject.UserID, params)
 	}
 	if err != nil {
-		response.InternalError(c, "Failed to list usage records: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Paginated(c, records, result.Total, page, pageSize)
+	out := make([]dto.UsageLog, 0, len(records))
+	for i := range records {
+		out = append(out, *dto.UsageLogFromService(&records[i]))
+	}
+	response.Paginated(c, out, result.Total, page, pageSize)
 }
 
 // GetByID handles getting a single usage record
 // GET /api/v1/usage/:id
 func (h *UsageHandler) GetByID(c *gin.Context) {
-	userValue, exists := c.Get("user")
-	if !exists {
-		response.Unauthorized(c, "User not authenticated")
-		return
-	}
-
-	user, ok := userValue.(*model.User)
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
-		response.InternalError(c, "Invalid user context")
+		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
@@ -107,31 +100,25 @@ func (h *UsageHandler) GetByID(c *gin.Context) {
 
 	record, err := h.usageService.GetByID(c.Request.Context(), usageID)
 	if err != nil {
-		response.NotFound(c, "Usage record not found")
+		response.ErrorFrom(c, err)
 		return
 	}
 
 	// 验证所有权
-	if record.UserID != user.ID {
+	if record.UserID != subject.UserID {
 		response.Forbidden(c, "Not authorized to access this record")
 		return
 	}
 
-	response.Success(c, record)
+	response.Success(c, dto.UsageLogFromService(record))
 }
 
 // Stats handles getting usage statistics
 // GET /api/v1/usage/stats
 func (h *UsageHandler) Stats(c *gin.Context) {
-	userValue, exists := c.Get("user")
-	if !exists {
-		response.Unauthorized(c, "User not authenticated")
-		return
-	}
-
-	user, ok := userValue.(*model.User)
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
-		response.InternalError(c, "Invalid user context")
+		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
@@ -149,7 +136,7 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 			response.NotFound(c, "API key not found")
 			return
 		}
-		if apiKey.UserID != user.ID {
+		if apiKey.UserID != subject.UserID {
 			response.Forbidden(c, "Not authorized to access this API key's statistics")
 			return
 		}
@@ -201,10 +188,10 @@ func (h *UsageHandler) Stats(c *gin.Context) {
 	if apiKeyID > 0 {
 		stats, err = h.usageService.GetStatsByApiKey(c.Request.Context(), apiKeyID, startTime, endTime)
 	} else {
-		stats, err = h.usageService.GetStatsByUser(c.Request.Context(), user.ID, startTime, endTime)
+		stats, err = h.usageService.GetStatsByUser(c.Request.Context(), subject.UserID, startTime, endTime)
 	}
 	if err != nil {
-		response.InternalError(c, "Failed to get usage statistics: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -245,21 +232,15 @@ func parseUserTimeRange(c *gin.Context) (time.Time, time.Time) {
 // DashboardStats handles getting user dashboard statistics
 // GET /api/v1/usage/dashboard/stats
 func (h *UsageHandler) DashboardStats(c *gin.Context) {
-	userValue, exists := c.Get("user")
-	if !exists {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
 		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
-	user, ok := userValue.(*model.User)
-	if !ok {
-		response.InternalError(c, "Invalid user context")
-		return
-	}
-
-	stats, err := h.usageService.GetUserDashboardStats(c.Request.Context(), user.ID)
+	stats, err := h.usageService.GetUserDashboardStats(c.Request.Context(), subject.UserID)
 	if err != nil {
-		response.InternalError(c, "Failed to get dashboard statistics")
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -269,24 +250,18 @@ func (h *UsageHandler) DashboardStats(c *gin.Context) {
 // DashboardTrend handles getting user usage trend data
 // GET /api/v1/usage/dashboard/trend
 func (h *UsageHandler) DashboardTrend(c *gin.Context) {
-	userValue, exists := c.Get("user")
-	if !exists {
-		response.Unauthorized(c, "User not authenticated")
-		return
-	}
-
-	user, ok := userValue.(*model.User)
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
-		response.InternalError(c, "Invalid user context")
+		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
 	startTime, endTime := parseUserTimeRange(c)
 	granularity := c.DefaultQuery("granularity", "day")
 
-	trend, err := h.usageService.GetUserUsageTrendByUserID(c.Request.Context(), user.ID, startTime, endTime, granularity)
+	trend, err := h.usageService.GetUserUsageTrendByUserID(c.Request.Context(), subject.UserID, startTime, endTime, granularity)
 	if err != nil {
-		response.InternalError(c, "Failed to get usage trend")
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -301,23 +276,17 @@ func (h *UsageHandler) DashboardTrend(c *gin.Context) {
 // DashboardModels handles getting user model usage statistics
 // GET /api/v1/usage/dashboard/models
 func (h *UsageHandler) DashboardModels(c *gin.Context) {
-	userValue, exists := c.Get("user")
-	if !exists {
-		response.Unauthorized(c, "User not authenticated")
-		return
-	}
-
-	user, ok := userValue.(*model.User)
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
-		response.InternalError(c, "Invalid user context")
+		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
 	startTime, endTime := parseUserTimeRange(c)
 
-	stats, err := h.usageService.GetUserModelStats(c.Request.Context(), user.ID, startTime, endTime)
+	stats, err := h.usageService.GetUserModelStats(c.Request.Context(), subject.UserID, startTime, endTime)
 	if err != nil {
-		response.InternalError(c, "Failed to get model statistics")
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -336,15 +305,9 @@ type BatchApiKeysUsageRequest struct {
 // DashboardApiKeysUsage handles getting usage stats for user's own API keys
 // POST /api/v1/usage/dashboard/api-keys-usage
 func (h *UsageHandler) DashboardApiKeysUsage(c *gin.Context) {
-	userValue, exists := c.Get("user")
-	if !exists {
-		response.Unauthorized(c, "User not authenticated")
-		return
-	}
-
-	user, ok := userValue.(*model.User)
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
 	if !ok {
-		response.InternalError(c, "Invalid user context")
+		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
@@ -360,9 +323,9 @@ func (h *UsageHandler) DashboardApiKeysUsage(c *gin.Context) {
 	}
 
 	// Verify ownership of all requested API keys
-	userApiKeys, _, err := h.apiKeyService.List(c.Request.Context(), user.ID, pagination.PaginationParams{Page: 1, PageSize: 1000})
+	userApiKeys, _, err := h.apiKeyService.List(c.Request.Context(), subject.UserID, pagination.PaginationParams{Page: 1, PageSize: 1000})
 	if err != nil {
-		response.InternalError(c, "Failed to verify API key ownership")
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -386,7 +349,7 @@ func (h *UsageHandler) DashboardApiKeysUsage(c *gin.Context) {
 
 	stats, err := h.usageService.GetBatchApiKeyUsageStats(c.Request.Context(), validApiKeyIDs)
 	if err != nil {
-		response.InternalError(c, "Failed to get API key usage stats")
+		response.ErrorFrom(c, err)
 		return
 	}
 

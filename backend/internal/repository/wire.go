@@ -1,7 +1,6 @@
 package repository
 
 import (
-	"github.com/Wei-Shaw/sub2api/internal/service"
 	"github.com/google/wire"
 )
 
@@ -16,7 +15,6 @@ var ProviderSet = wire.NewSet(
 	NewUsageLogRepository,
 	NewSettingRepository,
 	NewUserSubscriptionRepository,
-	wire.Struct(new(Repositories), "*"),
 
 	// Cache implementations
 	NewGatewayCache,
@@ -37,17 +35,4 @@ var ProviderSet = wire.NewSet(
 	NewClaudeOAuthClient,
 	NewHTTPUpstream,
 	NewOpenAIOAuthClient,
-	NewGeminiOAuthClient,
-
-	// Bind concrete repositories to service port interfaces
-	wire.Bind(new(service.UserRepository), new(*UserRepository)),
-	wire.Bind(new(service.ApiKeyRepository), new(*ApiKeyRepository)),
-	wire.Bind(new(service.GroupRepository), new(*GroupRepository)),
-	wire.Bind(new(service.AccountRepository), new(*AccountRepository)),
-	wire.Bind(new(service.ProxyRepository), new(*ProxyRepository)),
-	wire.Bind(new(service.RedeemCodeRepository), new(*RedeemCodeRepository)),
-	wire.Bind(new(service.UsageLogRepository), new(*UsageLogRepository)),
-	wire.Bind(new(service.SettingRepository), new(*SettingRepository)),
-	wire.Bind(new(service.UserSubscriptionRepository), new(*UserSubscriptionRepository)),
-	wire.Bind(new(service.GeminiOAuthClient), new(*GeminiOAuthClient)),
 )

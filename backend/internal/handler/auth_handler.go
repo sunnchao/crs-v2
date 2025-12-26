@@ -1,8 +1,9 @@
 package handler
 
 import (
-	"github.com/Wei-Shaw/sub2api/internal/model"
+	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/response"
+	middleware2 "github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -11,12 +12,14 @@ import (
 // AuthHandler handles authentication-related requests
 type AuthHandler struct {
 	authService *service.AuthService
+	userService *service.UserService
 }
 
 // NewAuthHandler creates a new AuthHandler
-func NewAuthHandler(authService *service.AuthService) *AuthHandler {
+func NewAuthHandler(authService *service.AuthService, userService *service.UserService) *AuthHandler {
 	return &AuthHandler{
 		authService: authService,
+		userService: userService,
 	}
 }
 
@@ -49,9 +52,9 @@ type LoginRequest struct {
 
 // AuthResponse 认证响应格式（匹配前端期望）
 type AuthResponse struct {
-	AccessToken string      `json:"access_token"`
-	TokenType   string      `json:"token_type"`
-	User        *model.User `json:"user"`
+	AccessToken string    `json:"access_token"`
+	TokenType   string    `json:"token_type"`
+	User        *dto.User `json:"user"`
 }
 
 // Register handles user registration
@@ -66,21 +69,21 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	// Turnstile 验证（当提供了邮箱验证码时跳过，因为发送验证码时已验证过）
 	if req.VerifyCode == "" {
 		if err := h.authService.VerifyTurnstile(c.Request.Context(), req.TurnstileToken, c.ClientIP()); err != nil {
-			response.BadRequest(c, "Turnstile verification failed: "+err.Error())
+			response.ErrorFrom(c, err)
 			return
 		}
 	}
 
 	token, user, err := h.authService.RegisterWithVerification(c.Request.Context(), req.Email, req.Password, req.VerifyCode)
 	if err != nil {
-		response.BadRequest(c, "Registration failed: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
 	response.Success(c, AuthResponse{
 		AccessToken: token,
 		TokenType:   "Bearer",
-		User:        user,
+		User:        dto.UserFromService(user),
 	})
 }
 
@@ -95,13 +98,13 @@ func (h *AuthHandler) SendVerifyCode(c *gin.Context) {
 
 	// Turnstile 验证
 	if err := h.authService.VerifyTurnstile(c.Request.Context(), req.TurnstileToken, c.ClientIP()); err != nil {
-		response.BadRequest(c, "Turnstile verification failed: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
 	result, err := h.authService.SendVerifyCodeAsync(c.Request.Context(), req.Email)
 	if err != nil {
-		response.BadRequest(c, "Failed to send verification code: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
@@ -122,37 +125,37 @@ func (h *AuthHandler) Login(c *gin.Context) {
 
 	// Turnstile 验证
 	if err := h.authService.VerifyTurnstile(c.Request.Context(), req.TurnstileToken, c.ClientIP()); err != nil {
-		response.BadRequest(c, "Turnstile verification failed: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
 	token, user, err := h.authService.Login(c.Request.Context(), req.Email, req.Password)
 	if err != nil {
-		response.Unauthorized(c, "Login failed: "+err.Error())
+		response.ErrorFrom(c, err)
 		return
 	}
 
 	response.Success(c, AuthResponse{
 		AccessToken: token,
 		TokenType:   "Bearer",
-		User:        user,
+		User:        dto.UserFromService(user),
 	})
 }
 
 // GetCurrentUser handles getting current authenticated user
 // GET /api/v1/auth/me
 func (h *AuthHandler) GetCurrentUser(c *gin.Context) {
-	userValue, exists := c.Get("user")
-	if !exists {
+	subject, ok := middleware2.GetAuthSubjectFromContext(c)
+	if !ok {
 		response.Unauthorized(c, "User not authenticated")
 		return
 	}
 
-	user, ok := userValue.(*model.User)
-	if !ok {
-		response.InternalError(c, "Invalid user context")
+	user, err := h.userService.GetByID(c.Request.Context(), subject.UserID)
+	if err != nil {
+		response.ErrorFrom(c, err)
 		return
 	}
 
-	response.Success(c, user)
+	response.Success(c, dto.UserFromService(user))
 }

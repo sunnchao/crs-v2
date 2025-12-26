@@ -8,22 +8,21 @@ import (
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/config"
-	"github.com/Wei-Shaw/sub2api/internal/model"
+	infraerrors "github.com/Wei-Shaw/sub2api/internal/infrastructure/errors"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/gorm"
 )
 
 var (
-	ErrInvalidCredentials  = errors.New("invalid email or password")
-	ErrUserNotActive       = errors.New("user is not active")
-	ErrEmailExists         = errors.New("email already exists")
-	ErrInvalidToken        = errors.New("invalid token")
-	ErrTokenExpired        = errors.New("token has expired")
-	ErrEmailVerifyRequired = errors.New("email verification is required")
-	ErrRegDisabled         = errors.New("registration is currently disabled")
-	ErrServiceUnavailable  = errors.New("service temporarily unavailable")
+	ErrInvalidCredentials  = infraerrors.Unauthorized("INVALID_CREDENTIALS", "invalid email or password")
+	ErrUserNotActive       = infraerrors.Forbidden("USER_NOT_ACTIVE", "user is not active")
+	ErrEmailExists         = infraerrors.Conflict("EMAIL_EXISTS", "email already exists")
+	ErrInvalidToken        = infraerrors.Unauthorized("INVALID_TOKEN", "invalid token")
+	ErrTokenExpired        = infraerrors.Unauthorized("TOKEN_EXPIRED", "token has expired")
+	ErrEmailVerifyRequired = infraerrors.BadRequest("EMAIL_VERIFY_REQUIRED", "email verification is required")
+	ErrRegDisabled         = infraerrors.Forbidden("REGISTRATION_DISABLED", "registration is currently disabled")
+	ErrServiceUnavailable  = infraerrors.ServiceUnavailable("SERVICE_UNAVAILABLE", "service temporarily unavailable")
 )
 
 // JWTClaims JWT载荷数据
@@ -64,12 +63,12 @@ func NewAuthService(
 }
 
 // Register 用户注册，返回token和用户
-func (s *AuthService) Register(ctx context.Context, email, password string) (string, *model.User, error) {
+func (s *AuthService) Register(ctx context.Context, email, password string) (string, *User, error) {
 	return s.RegisterWithVerification(ctx, email, password, "")
 }
 
 // RegisterWithVerification 用户注册（支持邮件验证），返回token和用户
-func (s *AuthService) RegisterWithVerification(ctx context.Context, email, password, verifyCode string) (string, *model.User, error) {
+func (s *AuthService) RegisterWithVerification(ctx context.Context, email, password, verifyCode string) (string, *User, error) {
 	// 检查是否开放注册
 	if s.settingService != nil && !s.settingService.IsRegistrationEnabled(ctx) {
 		return "", nil, ErrRegDisabled
@@ -113,13 +112,13 @@ func (s *AuthService) RegisterWithVerification(ctx context.Context, email, passw
 	}
 
 	// 创建用户
-	user := &model.User{
+	user := &User{
 		Email:        email,
 		PasswordHash: hashedPassword,
-		Role:         model.RoleUser,
+		Role:         RoleUser,
 		Balance:      defaultBalance,
 		Concurrency:  defaultConcurrency,
-		Status:       model.StatusActive,
+		Status:       StatusActive,
 	}
 
 	if err := s.userRepo.Create(ctx, user); err != nil {
@@ -251,11 +250,11 @@ func (s *AuthService) IsEmailVerifyEnabled(ctx context.Context) bool {
 }
 
 // Login 用户登录，返回JWT token
-func (s *AuthService) Login(ctx context.Context, email, password string) (string, *model.User, error) {
+func (s *AuthService) Login(ctx context.Context, email, password string) (string, *User, error) {
 	// 查找用户
 	user, err := s.userRepo.GetByEmail(ctx, email)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, ErrUserNotFound) {
 			return "", nil, ErrInvalidCredentials
 		}
 		// 记录数据库错误但不暴露给用户
@@ -307,7 +306,7 @@ func (s *AuthService) ValidateToken(tokenString string) (*JWTClaims, error) {
 }
 
 // GenerateToken 生成JWT token
-func (s *AuthService) GenerateToken(user *model.User) (string, error) {
+func (s *AuthService) GenerateToken(user *User) (string, error) {
 	now := time.Now()
 	expiresAt := now.Add(time.Duration(s.cfg.JWT.ExpireHour) * time.Hour)
 
@@ -357,7 +356,7 @@ func (s *AuthService) RefreshToken(ctx context.Context, oldTokenString string) (
 	// 获取最新的用户信息
 	user, err := s.userRepo.GetByID(ctx, claims.UserID)
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
+		if errors.Is(err, ErrUserNotFound) {
 			return "", ErrInvalidToken
 		}
 		log.Printf("[Auth] Database error refreshing token: %v", err)
