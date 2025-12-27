@@ -1,9 +1,9 @@
 <template>
   <AppLayout>
-    <div class="space-y-6">
-      <!-- Page Header Actions -->
-      <div class="flex justify-end gap-3">
-        <button
+    <TablePageLayout>
+      <template #actions>
+        <div class="flex justify-end gap-3">
+          <button
           @click="loadCodes"
           :disabled="loading"
           class="btn btn-secondary"
@@ -26,11 +26,12 @@
         <button @click="showGenerateDialog = true" class="btn btn-primary">
           {{ t('admin.redeem.generateCodes') }}
         </button>
-      </div>
+        </div>
+      </template>
 
-      <!-- Filters and Actions -->
-      <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div class="max-w-md flex-1">
+      <template #filters>
+        <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div class="max-w-md flex-1">
           <input
             v-model="searchQuery"
             type="text"
@@ -38,8 +39,8 @@
             class="input"
             @input="handleSearch"
           />
-        </div>
-        <div class="flex gap-2">
+          </div>
+          <div class="flex gap-2">
           <Select
             v-model="filters.type"
             :options="filterTypeOptions"
@@ -55,11 +56,11 @@
           <button @click="handleExportCodes" class="btn btn-secondary">
             {{ t('admin.redeem.exportCsv') }}
           </button>
+          </div>
         </div>
-      </div>
+      </template>
 
-      <!-- Redeem Codes Table -->
-      <div class="card overflow-hidden">
+      <template #table>
         <DataTable :columns="columns" :data="codes" :loading="loading">
           <template #cell-code="{ value }">
             <div class="flex items-center space-x-2">
@@ -151,7 +152,7 @@
 
           <template #cell-used_at="{ value }">
             <span class="text-sm text-gray-500 dark:text-dark-400">{{
-              value ? formatDate(value) : '-'
+              value ? formatDateTime(value) : '-'
             }}</span>
           </template>
 
@@ -176,24 +177,25 @@
             </div>
           </template>
         </DataTable>
-      </div>
+      </template>
 
-      <!-- Pagination -->
-      <Pagination
-        v-if="pagination.total > 0"
-        :page="pagination.page"
-        :total="pagination.total"
-        :page-size="pagination.page_size"
-        @update:page="handlePageChange"
-      />
+      <template #pagination>
+        <Pagination
+          v-if="pagination.total > 0"
+          :page="pagination.page"
+          :total="pagination.total"
+          :page-size="pagination.page_size"
+          @update:page="handlePageChange"
+        />
 
-      <!-- Batch Actions -->
-      <div v-if="filters.status === 'unused'" class="flex justify-end">
-        <button @click="showDeleteUnusedDialog = true" class="btn btn-danger">
-          {{ t('admin.redeem.deleteAllUnused') }}
-        </button>
-      </div>
-    </div>
+        <!-- Batch Actions -->
+        <div v-if="filters.status === 'unused'" class="flex justify-end">
+          <button @click="showDeleteUnusedDialog = true" class="btn btn-danger">
+            {{ t('admin.redeem.deleteAllUnused') }}
+          </button>
+        </div>
+      </template>
+    </TablePageLayout>
 
     <!-- Delete Confirmation Dialog -->
     <ConfirmDialog
@@ -416,10 +418,13 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { useClipboard } from '@/composables/useClipboard'
 import { adminAPI } from '@/api/admin'
+import { formatDateTime } from '@/utils/format'
 import type { RedeemCode, RedeemCodeType, Group } from '@/types'
 import type { Column } from '@/components/common/types'
 import AppLayout from '@/components/layout/AppLayout.vue'
+import TablePageLayout from '@/components/layout/TablePageLayout.vue'
 import DataTable from '@/components/common/DataTable.vue'
 import Pagination from '@/components/common/Pagination.vue'
 import ConfirmDialog from '@/components/common/ConfirmDialog.vue'
@@ -427,6 +432,7 @@ import Select from '@/components/common/Select.vue'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const { copyToClipboard: clipboardCopy } = useClipboard()
 
 const showGenerateDialog = ref(false)
 const showResultDialog = ref(false)
@@ -549,10 +555,6 @@ const generateForm = reactive({
   validity_days: 30
 })
 
-const formatDate = (dateString: string): string => {
-  return new Date(dateString).toLocaleDateString()
-}
-
 const loadCodes = async () => {
   loading.value = true
   try {
@@ -618,15 +620,12 @@ const handleGenerateCodes = async () => {
 }
 
 const copyToClipboard = async (text: string) => {
-  try {
-    await navigator.clipboard.writeText(text)
+  const success = await clipboardCopy(text, t('admin.redeem.copied'))
+  if (success) {
     copiedCode.value = text
     setTimeout(() => {
       copiedCode.value = null
     }, 2000)
-  } catch (error) {
-    appStore.showError(t('admin.redeem.failedToCopy'))
-    console.error('Error copying to clipboard:', error)
   }
 }
 
