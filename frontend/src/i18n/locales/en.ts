@@ -52,6 +52,7 @@ export default {
       password: 'Password',
       databaseName: 'Database Name',
       sslMode: 'SSL Mode',
+      passwordPlaceholder: 'Password',
       ssl: {
         disable: 'Disable',
         require: 'Require',
@@ -64,13 +65,17 @@ export default {
       host: 'Host',
       port: 'Port',
       password: 'Password (optional)',
-      database: 'Database'
+      database: 'Database',
+      passwordPlaceholder: 'Password'
     },
     admin: {
       title: 'Admin Account',
       email: 'Email',
       password: 'Password',
-      confirmPassword: 'Confirm Password'
+      confirmPassword: 'Confirm Password',
+      passwordPlaceholder: 'Min 6 characters',
+      confirmPasswordPlaceholder: 'Confirm password',
+      passwordMismatch: 'Passwords do not match'
     },
     ready: {
       title: 'Ready to Install',
@@ -127,7 +132,14 @@ export default {
     searchPlaceholder: 'Search...',
     noOptionsFound: 'No options found',
     saving: 'Saving...',
-    refresh: 'Refresh'
+    refresh: 'Refresh',
+    time: {
+      never: 'Never',
+      justNow: 'Just now',
+      minutesAgo: '{n}m ago',
+      hoursAgo: '{n}h ago',
+      daysAgo: '{n}d ago'
+    }
   },
 
   // Navigation
@@ -263,7 +275,7 @@ export default {
     created: 'Created',
     copyToClipboard: 'Copy to clipboard',
     copied: 'Copied!',
-    importToCcSwitch: 'Import to CC Switch',
+    importToCcSwitch: 'Import to CCS',
     enable: 'Enable',
     disable: 'Disable',
     nameLabel: 'Name',
@@ -519,6 +531,7 @@ export default {
       actual: 'Actual',
       standard: 'Standard',
       noDataAvailable: 'No data available',
+      recentUsage: 'Recent Usage',
       failedToLoad: 'Failed to load dashboard statistics'
     },
 
@@ -571,9 +584,13 @@ export default {
       noSubscription: 'No subscription',
       daysRemaining: '{days}d',
       expired: 'Expired',
+      disable: 'Disable',
+      enable: 'Enable',
       disableUser: 'Disable User',
       enableUser: 'Enable User',
       viewApiKeys: 'View API Keys',
+      groups: 'Groups',
+      apiKeys: 'API Keys',
       userApiKeys: 'User API Keys',
       noApiKeys: 'This user has no API keys',
       group: 'Group',
@@ -1157,9 +1174,9 @@ export default {
       batchAdd: 'Quick Add',
       batchInput: 'Proxy List',
       batchInputPlaceholder:
-        "Enter one proxy per line in the following formats:\nsocks5://user:pass{'@'}192.168.1.1:1080\nhttp://192.168.1.1:8080\nhttps://user:pass{'@'}proxy.example.com:443",
+        "Enter one proxy per line in the following formats:\nsocks5://user:pass@192.168.1.1:1080\nhttp://192.168.1.1:8080\nhttps://user:pass@proxy.example.com:443",
       batchInputHint:
-        "Supports http, https, socks5 protocols. Format: protocol://[user:pass{'@'}]host:port",
+        "Supports http, https, socks5 protocols. Format: protocol://[user:pass@]host:port",
       parsedCount: '{count} valid',
       invalidCount: '{count} invalid',
       duplicateCount: '{count} duplicate',
@@ -1336,12 +1353,12 @@ export default {
         port: 'SMTP Port',
         portPlaceholder: '587',
         username: 'SMTP Username',
-        usernamePlaceholder: 'your-email@gmail.com',
+        usernamePlaceholder: "your-email{'@'}gmail.com",
         password: 'SMTP Password',
         passwordPlaceholder: '********',
         passwordHint: 'Leave empty to keep existing password',
         fromEmail: 'From Email',
-        fromEmailPlaceholder: 'noreply@example.com',
+        fromEmailPlaceholder: "noreply{'@'}example.com",
         fromName: 'From Name',
         fromNamePlaceholder: 'Sub2API',
         useTls: 'Use TLS',
@@ -1351,7 +1368,7 @@ export default {
         title: 'Send Test Email',
         description: 'Send a test email to verify your SMTP configuration',
         recipientEmail: 'Recipient Email',
-        recipientEmailPlaceholder: 'test@example.com',
+        recipientEmailPlaceholder: "test{'@'}example.com",
         sendTestEmail: 'Send Test Email',
         sending: 'Sending...',
         enterRecipientHint: 'Please enter a recipient email address'

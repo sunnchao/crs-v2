@@ -15,7 +15,8 @@
             :key="column.key"
             scope="col"
             :class="[
-              'sticky-header-cell px-6 py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400',
+              'sticky-header-cell py-3 text-left text-xs font-medium uppercase tracking-wider text-gray-500 dark:text-dark-400',
+              getAdaptivePaddingClass(),
               { 'cursor-pointer hover:bg-gray-100 dark:hover:bg-dark-700': column.sortable },
               getStickyColumnClass(column, index)
             ]"
@@ -81,7 +82,7 @@
       <tbody class="table-body divide-y divide-gray-200 bg-white dark:divide-dark-700 dark:bg-dark-900">
         <!-- Loading skeleton -->
         <tr v-if="loading" v-for="i in 5" :key="i">
-          <td v-for="column in columns" :key="column.key" class="whitespace-nowrap px-6 py-4">
+          <td v-for="column in columns" :key="column.key" :class="['whitespace-nowrap py-4', getAdaptivePaddingClass()]">
             <div class="animate-pulse">
               <div class="h-4 w-3/4 rounded bg-gray-200 dark:bg-dark-700"></div>
             </div>
@@ -92,7 +93,7 @@
         <tr v-else-if="!data || data.length === 0">
           <td
             :colspan="columns.length"
-            class="px-6 py-12 text-center text-gray-500 dark:text-dark-400"
+            :class="['py-12 text-center text-gray-500 dark:text-dark-400', getAdaptivePaddingClass()]"
           >
             <slot name="empty">
               <div class="flex flex-col items-center">
@@ -128,7 +129,8 @@
             v-for="(column, colIndex) in columns"
             :key="column.key"
             :class="[
-              'whitespace-nowrap px-6 py-4 text-sm text-gray-900 dark:text-gray-100',
+              'whitespace-nowrap py-4 text-sm text-gray-900 dark:text-gray-100',
+              getAdaptivePaddingClass(),
               getStickyColumnClass(column, colIndex)
             ]"
           >
@@ -152,6 +154,7 @@ const { t } = useI18n()
 // 表格容器引用
 const tableWrapperRef = ref<HTMLElement | null>(null)
 const isScrollable = ref(false)
+const actionsColumnNeedsExpanding = ref(false)
 
 // 检查是否可滚动
 const checkScrollable = () => {
@@ -160,17 +163,71 @@ const checkScrollable = () => {
   }
 }
 
+// 检查操作列是否需要展开
+const checkActionsColumnWidth = () => {
+  if (!tableWrapperRef.value) return
+
+  // 查找第一行的操作列单元格
+  const firstActionCell = tableWrapperRef.value.querySelector('tbody tr:first-child td:last-child')
+  if (!firstActionCell) return
+
+  // 查找操作列内容的容器div
+  const actionsContainer = firstActionCell.querySelector('div')
+  if (!actionsContainer) return
+
+  // 临时展开以测量完整宽度
+  const wasExpanded = actionsExpanded.value
+  actionsExpanded.value = true
+
+  // 等待DOM更新
+  nextTick(() => {
+    // 测量所有按钮的总宽度
+    const buttons = actionsContainer.querySelectorAll('button')
+    if (buttons.length <= 2) {
+      actionsColumnNeedsExpanding.value = false
+      actionsExpanded.value = wasExpanded
+      return
+    }
+
+    // 计算所有按钮的总宽度（包括gap）
+    let totalWidth = 0
+    buttons.forEach((btn, index) => {
+      totalWidth += (btn as HTMLElement).offsetWidth
+      if (index < buttons.length - 1) {
+        totalWidth += 4 // gap-1 = 4px
+      }
+    })
+
+    // 获取单元格可用宽度（减去padding）
+    const cellWidth = (firstActionCell as HTMLElement).clientWidth - 32 // 减去左右padding
+
+    // 如果总宽度超过可用宽度，需要展开功能
+    actionsColumnNeedsExpanding.value = totalWidth > cellWidth
+
+    // 恢复原来的展开状态
+    actionsExpanded.value = wasExpanded
+  })
+}
+
 // 监听尺寸变化
 let resizeObserver: ResizeObserver | null = null
 
 onMounted(() => {
   checkScrollable()
+  checkActionsColumnWidth()
   if (tableWrapperRef.value && typeof ResizeObserver !== 'undefined') {
-    resizeObserver = new ResizeObserver(checkScrollable)
+    resizeObserver = new ResizeObserver(() => {
+      checkScrollable()
+      checkActionsColumnWidth()
+    })
     resizeObserver.observe(tableWrapperRef.value)
   } else {
     // 降级方案：不支持 ResizeObserver 时使用 window resize
-    window.addEventListener('resize', checkScrollable)
+    const handleResize = () => {
+      checkScrollable()
+      checkActionsColumnWidth()
+    }
+    window.addEventListener('resize', handleResize)
   }
 })
 
@@ -186,6 +243,7 @@ interface Props {
   stickyFirstColumn?: boolean
   stickyActionsColumn?: boolean
   expandableActions?: boolean
+  actionsCount?: number // 操作按钮总数，用于判断是否需要展开功能
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -199,15 +257,23 @@ const sortKey = ref<string>('')
 const sortOrder = ref<'asc' | 'desc'>('asc')
 const actionsExpanded = ref(false)
 
-// 数据/列/展开状态变化时重新检查滚动状态
+// 数据/列变化时重新检查滚动状态
+// 注意：不能监听 actionsExpanded，因为 checkActionsColumnWidth 会临时修改它，会导致无限循环
 watch(
-  [() => props.data.length, () => props.columns, actionsExpanded],
+  [() => props.data.length, () => props.columns],
   async () => {
     await nextTick()
     checkScrollable()
+    checkActionsColumnWidth()
   },
   { flush: 'post' }
 )
+
+// 单独监听展开状态变化，只更新滚动状态
+watch(actionsExpanded, async () => {
+  await nextTick()
+  checkScrollable()
+})
 
 const handleSort = (key: string) => {
   if (sortKey.value === key) {
@@ -234,7 +300,17 @@ const sortedData = computed(() => {
 
 // 检查是否有可展开的操作列
 const hasExpandableActions = computed(() => {
-  return props.expandableActions && props.columns.some((col) => col.key === 'actions')
+  // 如果明确指定了actionsCount，使用它来判断
+  if (props.actionsCount !== undefined) {
+    return props.expandableActions && props.columns.some((col) => col.key === 'actions') && props.actionsCount > 2
+  }
+
+  // 否则使用原来的检测逻辑
+  return (
+    props.expandableActions &&
+    props.columns.some((col) => col.key === 'actions') &&
+    actionsColumnNeedsExpanding.value
+  )
 })
 
 // 切换操作列展开/折叠状态
@@ -273,6 +349,22 @@ const getStickyColumnClass = (column: Column, index: number) => {
   }
 
   return classes.join(' ')
+}
+
+// 根据列数自适应调整内边距
+const getAdaptivePaddingClass = () => {
+  const columnCount = props.columns.length
+
+  // 列数越多，内边距越小
+  if (columnCount >= 10) {
+    return 'px-2' // 8px
+  } else if (columnCount >= 7) {
+    return 'px-3' // 12px
+  } else if (columnCount >= 5) {
+    return 'px-4' // 16px
+  } else {
+    return 'px-6' // 24px (原始值)
+  }
 }
 </script>
 
