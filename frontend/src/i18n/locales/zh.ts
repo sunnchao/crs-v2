@@ -328,6 +328,8 @@ export default {
     allApiKeys: '全部密钥',
     timeRange: '时间范围',
     exportCsv: '导出 CSV',
+    account: '账号',
+    group: '分组',
     model: '模型',
     type: '类型',
     tokens: 'Token',

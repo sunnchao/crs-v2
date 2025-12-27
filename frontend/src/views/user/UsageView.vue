@@ -181,6 +181,22 @@
             }}</span>
           </template>
 
+          <template #cell-account="{ row }">
+            <span class="text-sm text-gray-900 dark:text-white">{{
+              row.account?.name || '-'
+            }}</span>
+          </template>
+
+          <template #cell-group="{ row }">
+            <span
+              v-if="row.group"
+              class="inline-flex items-center rounded px-2 py-0.5 text-xs font-medium bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
+            >
+              {{ row.group.name }}
+            </span>
+            <span v-else class="text-sm text-gray-400 dark:text-gray-500">-</span>
+          </template>
+
           <template #cell-model="{ value }">
             <span class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
           </template>
@@ -425,6 +441,8 @@ const usageStats = ref<UsageStatsResponse | null>(null)
 
 const columns = computed<Column[]>(() => [
   { key: 'api_key', label: t('usage.apiKeyFilter'), sortable: false },
+  { key: 'account', label: t('usage.account'), sortable: false },
+  { key: 'group', label: t('usage.group'), sortable: false },
   { key: 'model', label: t('usage.model'), sortable: true },
   { key: 'stream', label: t('usage.type'), sortable: false },
   { key: 'tokens', label: t('usage.tokens'), sortable: false },
@@ -590,6 +608,8 @@ const exportToCSV = () => {
   }
 
   const headers = [
+    'Account',
+    'Group',
     'Model',
     'Type',
     'Input Tokens',
@@ -603,6 +623,8 @@ const exportToCSV = () => {
     'Time'
   ]
   const rows = usageLogs.value.map((log) => [
+    log.account?.name ?? '',
+    log.group?.name ?? '',
     log.model,
     log.stream ? 'Stream' : 'Sync',
     log.input_tokens,

@@ -332,6 +332,8 @@ export default {
     allApiKeys: 'All API Keys',
     timeRange: 'Time Range',
     exportCsv: 'Export CSV',
+    account: 'Account',
+    group: 'Group',
     model: 'Model',
     type: 'Type',
     tokens: 'Tokens',
