@@ -23,7 +23,11 @@
               />
             </svg>
           </button>
-          <button @click="showCreateModal = true" class="btn btn-primary">
+          <button
+            @click="showCreateModal = true"
+            class="btn btn-primary"
+            data-tour="groups-create-btn"
+          >
             <svg
               class="mr-2 h-5 w-5"
               fill="none"
@@ -78,11 +82,21 @@
                   ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400'
                   : value === 'openai'
                     ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
-                    : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                    : value === 'antigravity'
+                      ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+                      : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
               ]"
             >
               <PlatformIcon :platform="value" size="xs" />
-              {{ value === 'anthropic' ? 'Anthropic' : value === 'openai' ? 'OpenAI' : 'Gemini' }}
+              {{
+                value === 'anthropic'
+                  ? 'Anthropic'
+                  : value === 'openai'
+                    ? 'OpenAI'
+                    : value === 'antigravity'
+                      ? 'Antigravity'
+                      : 'Gemini'
+              }}
             </span>
           </template>
 
@@ -244,6 +258,7 @@
             required
             class="input"
             :placeholder="t('admin.groups.enterGroupName')"
+            data-tour="group-form-name"
           />
         </div>
         <div>
@@ -257,7 +272,11 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.groups.form.platform') }}</label>
-          <Select v-model="createForm.platform" :options="platformOptions" />
+          <Select
+            v-model="createForm.platform"
+            :options="platformOptions"
+            data-tour="group-form-platform"
+          />
           <p class="input-hint">{{ t('admin.groups.platformHint') }}</p>
         </div>
         <div v-if="createForm.subscription_type !== 'subscription'">
@@ -269,37 +288,70 @@
             min="0.001"
             required
             class="input"
+            data-tour="group-form-multiplier"
           />
           <p class="input-hint">{{ t('admin.groups.rateMultiplierHint') }}</p>
         </div>
-        <div v-if="createForm.subscription_type !== 'subscription'" class="flex items-center gap-3">
-          <button
-            type="button"
-            @click="createForm.is_exclusive = !createForm.is_exclusive"
-            :class="[
-              'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-              createForm.is_exclusive ? 'bg-primary-500' : 'bg-gray-300 dark:bg-dark-600'
-            ]"
-          >
-            <span
+        <div v-if="createForm.subscription_type !== 'subscription'" data-tour="group-form-exclusive">
+          <div class="mb-1.5 flex items-center gap-1">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ t('admin.groups.form.exclusive') }}
+            </label>
+            <!-- Help Tooltip -->
+            <div class="group relative inline-flex">
+              <svg
+                class="h-3.5 w-3.5 cursor-help text-gray-400 transition-colors hover:text-primary-500 dark:text-gray-500 dark:hover:text-primary-400"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <!-- Tooltip Popover -->
+              <div class="pointer-events-none absolute bottom-full left-0 z-50 mb-2 w-72 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:opacity-100">
+                <div class="rounded-lg bg-gray-900 p-3 text-white shadow-lg dark:bg-gray-800">
+                  <p class="mb-2 text-xs font-medium">{{ t('admin.groups.exclusiveTooltip.title') }}</p>
+                  <p class="mb-2 text-xs leading-relaxed text-gray-300">
+                    {{ t('admin.groups.exclusiveTooltip.description') }}
+                  </p>
+                  <div class="rounded bg-gray-800 p-2 dark:bg-gray-700">
+                    <p class="text-xs leading-relaxed text-gray-300">
+                      <span class="text-primary-400">💡 {{ t('admin.groups.exclusiveTooltip.example') }}</span>
+                      {{ t('admin.groups.exclusiveTooltip.exampleContent') }}
+                    </p>
+                  </div>
+                  <!-- Arrow -->
+                  <div class="absolute -bottom-1.5 left-3 h-3 w-3 rotate-45 bg-gray-900 dark:bg-gray-800"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              @click="createForm.is_exclusive = !createForm.is_exclusive"
               :class="[
-                'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
-                createForm.is_exclusive ? 'translate-x-6' : 'translate-x-1'
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                createForm.is_exclusive ? 'bg-primary-500' : 'bg-gray-300 dark:bg-dark-600'
               ]"
-            />
-          </button>
-          <label class="text-sm text-gray-700 dark:text-gray-300">
-            {{ t('admin.groups.exclusiveHint') }}
-          </label>
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  createForm.is_exclusive ? 'translate-x-6' : 'translate-x-1'
+                ]"
+              />
+            </button>
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{ createForm.is_exclusive ? t('admin.groups.exclusive') : t('admin.groups.public') }}
+            </span>
+          </div>
         </div>
 
         <!-- Subscription Configuration -->
         <div class="mt-4 border-t pt-4">
-          <h4 class="mb-4 text-sm font-medium text-gray-900 dark:text-white">
-            {{ t('admin.groups.subscription.title') }}
-          </h4>
-
-          <div class="mb-4">
+          <div>
             <label class="input-label">{{ t('admin.groups.subscription.type') }}</label>
             <Select v-model="createForm.subscription_type" :options="subscriptionTypeOptions" />
             <p class="input-hint">{{ t('admin.groups.subscription.typeHint') }}</p>
@@ -358,6 +410,7 @@
             form="create-group-form"
             :disabled="submitting"
             class="btn btn-primary"
+            data-tour="group-form-submit"
           >
             <svg
               v-if="submitting"
@@ -400,7 +453,13 @@
       >
         <div>
           <label class="input-label">{{ t('admin.groups.form.name') }}</label>
-          <input v-model="editForm.name" type="text" required class="input" />
+          <input
+            v-model="editForm.name"
+            type="text"
+            required
+            class="input"
+            data-tour="edit-group-form-name"
+          />
         </div>
         <div>
           <label class="input-label">{{ t('admin.groups.form.description') }}</label>
@@ -408,7 +467,12 @@
         </div>
         <div>
           <label class="input-label">{{ t('admin.groups.form.platform') }}</label>
-          <Select v-model="editForm.platform" :options="platformOptions" :disabled="true" />
+          <Select
+            v-model="editForm.platform"
+            :options="platformOptions"
+            :disabled="true"
+            data-tour="group-form-platform"
+          />
           <p class="input-hint">{{ t('admin.groups.platformNotEditable') }}</p>
         </div>
         <div v-if="editForm.subscription_type !== 'subscription'">
@@ -420,27 +484,64 @@
             min="0.001"
             required
             class="input"
+            data-tour="group-form-multiplier"
           />
         </div>
-        <div v-if="editForm.subscription_type !== 'subscription'" class="flex items-center gap-3">
-          <button
-            type="button"
-            @click="editForm.is_exclusive = !editForm.is_exclusive"
-            :class="[
-              'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
-              editForm.is_exclusive ? 'bg-primary-500' : 'bg-gray-300 dark:bg-dark-600'
-            ]"
-          >
-            <span
+        <div v-if="editForm.subscription_type !== 'subscription'">
+          <div class="mb-1.5 flex items-center gap-1">
+            <label class="text-sm font-medium text-gray-700 dark:text-gray-300">
+              {{ t('admin.groups.form.exclusive') }}
+            </label>
+            <!-- Help Tooltip -->
+            <div class="group relative inline-flex">
+              <svg
+                class="h-3.5 w-3.5 cursor-help text-gray-400 transition-colors hover:text-primary-500 dark:text-gray-500 dark:hover:text-primary-400"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                stroke-width="2"
+              >
+                <path stroke-linecap="round" stroke-linejoin="round" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <!-- Tooltip Popover -->
+              <div class="pointer-events-none absolute bottom-full left-0 z-50 mb-2 w-72 opacity-0 transition-all duration-200 group-hover:pointer-events-auto group-hover:opacity-100">
+                <div class="rounded-lg bg-gray-900 p-3 text-white shadow-lg dark:bg-gray-800">
+                  <p class="mb-2 text-xs font-medium">{{ t('admin.groups.exclusiveTooltip.title') }}</p>
+                  <p class="mb-2 text-xs leading-relaxed text-gray-300">
+                    {{ t('admin.groups.exclusiveTooltip.description') }}
+                  </p>
+                  <div class="rounded bg-gray-800 p-2 dark:bg-gray-700">
+                    <p class="text-xs leading-relaxed text-gray-300">
+                      <span class="text-primary-400">💡 {{ t('admin.groups.exclusiveTooltip.example') }}</span>
+                      {{ t('admin.groups.exclusiveTooltip.exampleContent') }}
+                    </p>
+                  </div>
+                  <!-- Arrow -->
+                  <div class="absolute -bottom-1.5 left-3 h-3 w-3 rotate-45 bg-gray-900 dark:bg-gray-800"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="flex items-center gap-3">
+            <button
+              type="button"
+              @click="editForm.is_exclusive = !editForm.is_exclusive"
               :class="[
-                'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
-                editForm.is_exclusive ? 'translate-x-6' : 'translate-x-1'
+                'relative inline-flex h-6 w-11 items-center rounded-full transition-colors',
+                editForm.is_exclusive ? 'bg-primary-500' : 'bg-gray-300 dark:bg-dark-600'
               ]"
-            />
-          </button>
-          <label class="text-sm text-gray-700 dark:text-gray-300">
-            {{ t('admin.groups.exclusiveHint') }}
-          </label>
+            >
+              <span
+                :class="[
+                  'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform',
+                  editForm.is_exclusive ? 'translate-x-6' : 'translate-x-1'
+                ]"
+              />
+            </button>
+            <span class="text-sm text-gray-500 dark:text-gray-400">
+              {{ editForm.is_exclusive ? t('admin.groups.exclusive') : t('admin.groups.public') }}
+            </span>
+          </div>
         </div>
         <div>
           <label class="input-label">{{ t('admin.groups.form.status') }}</label>
@@ -449,11 +550,7 @@
 
         <!-- Subscription Configuration -->
         <div class="mt-4 border-t pt-4">
-          <h4 class="mb-4 text-sm font-medium text-gray-900 dark:text-white">
-            {{ t('admin.groups.subscription.title') }}
-          </h4>
-
-          <div class="mb-4">
+          <div>
             <label class="input-label">{{ t('admin.groups.subscription.type') }}</label>
             <Select
               v-model="editForm.subscription_type"
@@ -516,6 +613,7 @@
             form="edit-group-form"
             :disabled="submitting"
             class="btn btn-primary"
+            data-tour="group-form-submit"
           >
             <svg
               v-if="submitting"
@@ -561,6 +659,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useAppStore } from '@/stores/app'
+import { useOnboardingStore } from '@/stores/onboarding'
 import { adminAPI } from '@/api/admin'
 import type { Group, GroupPlatform, SubscriptionType } from '@/types'
 import type { Column } from '@/components/common/types'
@@ -576,6 +675,7 @@ import PlatformIcon from '@/components/common/PlatformIcon.vue'
 
 const { t } = useI18n()
 const appStore = useAppStore()
+const onboardingStore = useOnboardingStore()
 
 const columns = computed<Column[]>(() => [
   { key: 'name', label: t('admin.groups.columns.name'), sortable: true },
@@ -604,14 +704,16 @@ const exclusiveOptions = computed(() => [
 const platformOptions = computed(() => [
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'openai', label: 'OpenAI' },
-  { value: 'gemini', label: 'Gemini' }
+  { value: 'gemini', label: 'Gemini' },
+  { value: 'antigravity', label: 'Antigravity' }
 ])
 
 const platformFilterOptions = computed(() => [
   { value: '', label: t('admin.groups.allPlatforms') },
   { value: 'anthropic', label: 'Anthropic' },
   { value: 'openai', label: 'OpenAI' },
-  { value: 'gemini', label: 'Gemini' }
+  { value: 'gemini', label: 'Gemini' },
+  { value: 'antigravity', label: 'Antigravity' }
 ])
 
 const editStatusOptions = computed(() => [
@@ -745,9 +847,14 @@ const handleCreateGroup = async () => {
     appStore.showSuccess(t('admin.groups.groupCreated'))
     closeCreateModal()
     loadGroups()
+    // Only advance tour if active, on submit step, and creation succeeded
+    if (onboardingStore.isCurrentStep('[data-tour="group-form-submit"]')) {
+      onboardingStore.nextStep(500)
+    }
   } catch (error: any) {
     appStore.showError(error.response?.data?.detail || t('admin.groups.failedToCreate'))
     console.error('Error creating group:', error)
+    // Don't advance tour on error
   } finally {
     submitting.value = false
   }

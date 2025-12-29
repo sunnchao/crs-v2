@@ -235,90 +235,114 @@
           </template>
 
           <template #cell-tokens="{ row }">
-            <div class="space-y-1.5 text-sm">
-              <!-- Input / Output Tokens -->
-              <div class="flex items-center gap-2">
-                <!-- Input -->
-                <div class="inline-flex items-center gap-1">
-                  <svg
-                    class="h-3.5 w-3.5 text-emerald-500"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M19 14l-7 7m0 0l-7-7m7 7V3"
-                    />
-                  </svg>
-                  <span class="font-medium text-gray-900 dark:text-white">{{
-                    row.input_tokens.toLocaleString()
-                  }}</span>
+            <div class="flex items-center gap-1.5">
+              <div class="space-y-1.5 text-sm">
+                <!-- Input / Output Tokens -->
+                <div class="flex items-center gap-2">
+                  <!-- Input -->
+                  <div class="inline-flex items-center gap-1">
+                    <svg
+                      class="h-3.5 w-3.5 text-emerald-500"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M19 14l-7 7m0 0l-7-7m7 7V3"
+                      />
+                    </svg>
+                    <span class="font-medium text-gray-900 dark:text-white">{{
+                      row.input_tokens.toLocaleString()
+                    }}</span>
+                  </div>
+                  <!-- Output -->
+                  <div class="inline-flex items-center gap-1">
+                    <svg
+                      class="h-3.5 w-3.5 text-violet-500"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M5 10l7-7m0 0l7 7m-7-7v18"
+                      />
+                    </svg>
+                    <span class="font-medium text-gray-900 dark:text-white">{{
+                      row.output_tokens.toLocaleString()
+                    }}</span>
+                  </div>
                 </div>
-                <!-- Output -->
-                <div class="inline-flex items-center gap-1">
-                  <svg
-                    class="h-3.5 w-3.5 text-violet-500"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M5 10l7-7m0 0l7 7m-7-7v18"
-                    />
-                  </svg>
-                  <span class="font-medium text-gray-900 dark:text-white">{{
-                    row.output_tokens.toLocaleString()
-                  }}</span>
+                <!-- Cache Tokens (Read + Write) -->
+                <div
+                  v-if="row.cache_read_tokens > 0 || row.cache_creation_tokens > 0"
+                  class="flex items-center gap-2"
+                >
+                  <!-- Cache Read -->
+                  <div v-if="row.cache_read_tokens > 0" class="inline-flex items-center gap-1">
+                    <svg
+                      class="h-3.5 w-3.5 text-sky-500"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
+                      />
+                    </svg>
+                    <span class="font-medium text-sky-600 dark:text-sky-400">{{
+                      formatCacheTokens(row.cache_read_tokens)
+                    }}</span>
+                  </div>
+                  <!-- Cache Write -->
+                  <div v-if="row.cache_creation_tokens > 0" class="inline-flex items-center gap-1">
+                    <svg
+                      class="h-3.5 w-3.5 text-amber-500"
+                      fill="none"
+                      stroke="currentColor"
+                      viewBox="0 0 24 24"
+                    >
+                      <path
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                        stroke-width="2"
+                        d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
+                      />
+                    </svg>
+                    <span class="font-medium text-amber-600 dark:text-amber-400">{{
+                      formatCacheTokens(row.cache_creation_tokens)
+                    }}</span>
+                  </div>
                 </div>
               </div>
-              <!-- Cache Tokens (Read + Write) -->
+              <!-- Token Detail Tooltip -->
               <div
-                v-if="row.cache_read_tokens > 0 || row.cache_creation_tokens > 0"
-                class="flex items-center gap-2"
+                class="group relative"
+                @mouseenter="showTokenTooltip($event, row)"
+                @mouseleave="hideTokenTooltip"
               >
-                <!-- Cache Read -->
-                <div v-if="row.cache_read_tokens > 0" class="inline-flex items-center gap-1">
+                <div
+                  class="flex h-4 w-4 cursor-help items-center justify-center rounded-full bg-gray-100 transition-colors group-hover:bg-blue-100 dark:bg-gray-700 dark:group-hover:bg-blue-900/50"
+                >
                   <svg
-                    class="h-3.5 w-3.5 text-sky-500"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
+                    class="h-3 w-3 text-gray-400 group-hover:text-blue-500 dark:text-gray-500 dark:group-hover:text-blue-400"
+                    fill="currentColor"
+                    viewBox="0 0 20 20"
                   >
                     <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M5 8h14M5 8a2 2 0 110-4h14a2 2 0 110 4M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"
+                      fill-rule="evenodd"
+                      d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                      clip-rule="evenodd"
                     />
                   </svg>
-                  <span class="font-medium text-sky-600 dark:text-sky-400">{{
-                    formatCacheTokens(row.cache_read_tokens)
-                  }}</span>
-                </div>
-                <!-- Cache Write -->
-                <div v-if="row.cache_creation_tokens > 0" class="inline-flex items-center gap-1">
-                  <svg
-                    class="h-3.5 w-3.5 text-amber-500"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"
-                    />
-                  </svg>
-                  <span class="font-medium text-amber-600 dark:text-amber-400">{{
-                    formatCacheTokens(row.cache_creation_tokens)
-                  }}</span>
                 </div>
               </div>
             </div>
@@ -408,6 +432,54 @@
     </TablePageLayout>
   </AppLayout>
 
+  <!-- Token Tooltip Portal -->
+  <Teleport to="body">
+    <div
+      v-if="tokenTooltipVisible"
+      class="fixed z-[9999] pointer-events-none -translate-y-1/2"
+      :style="{
+        left: tokenTooltipPosition.x + 'px',
+        top: tokenTooltipPosition.y + 'px'
+      }"
+    >
+      <div
+        class="whitespace-nowrap rounded-lg border border-gray-700 bg-gray-900 px-3 py-2.5 text-xs text-white shadow-xl dark:border-gray-600 dark:bg-gray-800"
+      >
+        <div class="space-y-1.5">
+          <!-- Token Breakdown -->
+          <div class="mb-2 border-b border-gray-700 pb-1.5">
+            <div class="text-xs font-semibold text-gray-300 mb-1">Token 明细</div>
+            <div v-if="tokenTooltipData && tokenTooltipData.input_tokens > 0" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('admin.usage.inputTokens') }}</span>
+              <span class="font-medium text-white">{{ tokenTooltipData.input_tokens.toLocaleString() }}</span>
+            </div>
+            <div v-if="tokenTooltipData && tokenTooltipData.output_tokens > 0" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('admin.usage.outputTokens') }}</span>
+              <span class="font-medium text-white">{{ tokenTooltipData.output_tokens.toLocaleString() }}</span>
+            </div>
+            <div v-if="tokenTooltipData && tokenTooltipData.cache_creation_tokens > 0" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('admin.usage.cacheCreationTokens') }}</span>
+              <span class="font-medium text-white">{{ tokenTooltipData.cache_creation_tokens.toLocaleString() }}</span>
+            </div>
+            <div v-if="tokenTooltipData && tokenTooltipData.cache_read_tokens > 0" class="flex items-center justify-between gap-4">
+              <span class="text-gray-400">{{ t('admin.usage.cacheReadTokens') }}</span>
+              <span class="font-medium text-white">{{ tokenTooltipData.cache_read_tokens.toLocaleString() }}</span>
+            </div>
+          </div>
+          <!-- Total -->
+          <div class="flex items-center justify-between gap-6 border-t border-gray-700 pt-1.5">
+            <span class="text-gray-400">{{ t('usage.totalTokens') }}</span>
+            <span class="font-semibold text-blue-400">{{ ((tokenTooltipData?.input_tokens || 0) + (tokenTooltipData?.output_tokens || 0) + (tokenTooltipData?.cache_creation_tokens || 0) + (tokenTooltipData?.cache_read_tokens || 0)).toLocaleString() }}</span>
+          </div>
+        </div>
+        <!-- Tooltip Arrow (left side) -->
+        <div
+          class="absolute right-full top-1/2 h-0 w-0 -translate-y-1/2 border-b-[6px] border-r-[6px] border-t-[6px] border-b-transparent border-r-gray-900 border-t-transparent dark:border-r-gray-800"
+        ></div>
+      </div>
+    </div>
+  </Teleport>
+
   <!-- Tooltip Portal -->
   <Teleport to="body">
     <div
@@ -474,6 +546,11 @@ const tooltipVisible = ref(false)
 const tooltipPosition = ref({ x: 0, y: 0 })
 const tooltipData = ref<UsageLog | null>(null)
 
+// Token tooltip state
+const tokenTooltipVisible = ref(false)
+const tokenTooltipPosition = ref({ x: 0, y: 0 })
+const tokenTooltipData = ref<UsageLog | null>(null)
+
 // Usage stats from API
 const usageStats = ref<UsageStatsResponse | null>(null)
 
@@ -506,9 +583,19 @@ const apiKeyOptions = computed(() => {
   ]
 })
 
+// Helper function to format date in local timezone
+const formatLocalDate = (date: Date): string => {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+}
+
+// Initialize date range immediately
+const now = new Date()
+const weekAgo = new Date(now)
+weekAgo.setDate(weekAgo.getDate() - 6)
+
 // Date range state
-const startDate = ref('')
-const endDate = ref('')
+const startDate = ref(formatLocalDate(weekAgo))
+const endDate = ref(formatLocalDate(now))
 
 const filters = ref<UsageQueryParams>({
   api_key_id: undefined,
@@ -516,18 +603,9 @@ const filters = ref<UsageQueryParams>({
   end_date: undefined
 })
 
-// Initialize default date range (last 7 days)
-const initializeDateRange = () => {
-  const now = new Date()
-  const today = now.toISOString().split('T')[0]
-  const weekAgo = new Date(now)
-  weekAgo.setDate(weekAgo.getDate() - 6)
-
-  startDate.value = weekAgo.toISOString().split('T')[0]
-  endDate.value = today
-  filters.value.start_date = startDate.value
-  filters.value.end_date = endDate.value
-}
+// Initialize filters with date range
+filters.value.start_date = startDate.value
+filters.value.end_date = endDate.value
 
 // Handle date range change from DateRangePicker
 const onDateRangeChange = (range: {
@@ -647,7 +725,13 @@ const resetFilters = () => {
     end_date: undefined
   }
   // Reset date range to default (last 7 days)
-  initializeDateRange()
+  const now = new Date()
+  const weekAgo = new Date(now)
+  weekAgo.setDate(weekAgo.getDate() - 6)
+  startDate.value = formatLocalDate(weekAgo)
+  endDate.value = formatLocalDate(now)
+  filters.value.start_date = startDate.value
+  filters.value.end_date = endDate.value
   pagination.page = 1
   loadUsageLogs()
   loadUsageStats()
@@ -793,8 +877,23 @@ const hideTooltip = () => {
   tooltipData.value = null
 }
 
+// Token tooltip functions
+const showTokenTooltip = (event: MouseEvent, row: UsageLog) => {
+  const target = event.currentTarget as HTMLElement
+  const rect = target.getBoundingClientRect()
+
+  tokenTooltipData.value = row
+  tokenTooltipPosition.value.x = rect.right + 8
+  tokenTooltipPosition.value.y = rect.top + rect.height / 2
+  tokenTooltipVisible.value = true
+}
+
+const hideTokenTooltip = () => {
+  tokenTooltipVisible.value = false
+  tokenTooltipData.value = null
+}
+
 onMounted(() => {
-  initializeDateRange()
   loadApiKeys()
   loadUsageLogs()
   loadUsageStats()
