@@ -108,8 +108,13 @@ backend/.installed
 # ===================
 tests
 CLAUDE.md
+AGENTS.md
 .claude
 scripts
+.code-review-state
+openspec/
+docs/
+code-reviews/
 
 config.yaml
 .installed
