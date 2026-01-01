@@ -88,6 +88,8 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 	reqModel := parsedReq.Model
 	reqStream := parsedReq.Stream
 
+	requestStart := time.Now()
+
 	// 验证 model 必填
 	if reqModel == "" {
 		h.errorResponse(c, http.StatusBadRequest, "invalid_request_error", "model is required")
@@ -239,6 +241,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					failedAccountIDs[account.ID] = struct{}{}
 					if switchCount >= maxAccountSwitches {
 						lastFailoverStatus = failoverErr.StatusCode
+						h.recordFailedUsage(apiKey, account, subscription, reqModel, reqStream, requestStart)
 						h.handleFailoverExhausted(c, lastFailoverStatus, streamStarted)
 						return
 					}
@@ -248,6 +251,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 					continue
 				}
 				// 错误响应已在Forward中处理，这里只记录日志
+				h.recordFailedUsage(apiKey, account, subscription, reqModel, reqStream, requestStart)
 				log.Printf("Forward request failed: %v", err)
 				return
 			}
@@ -363,6 +367,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				failedAccountIDs[account.ID] = struct{}{}
 				if switchCount >= maxAccountSwitches {
 					lastFailoverStatus = failoverErr.StatusCode
+					h.recordFailedUsage(apiKey, account, subscription, reqModel, reqStream, requestStart)
 					h.handleFailoverExhausted(c, lastFailoverStatus, streamStarted)
 					return
 				}
@@ -372,6 +377,7 @@ func (h *GatewayHandler) Messages(c *gin.Context) {
 				continue
 			}
 			// 错误响应已在Forward中处理，这里只记录日志
+			h.recordFailedUsage(apiKey, account, subscription, reqModel, reqStream, requestStart)
 			log.Printf("Forward request failed: %v", err)
 			return
 		}
@@ -546,6 +552,31 @@ func (h *GatewayHandler) calculateSubscriptionRemaining(group *service.Group, su
 func (h *GatewayHandler) handleConcurrencyError(c *gin.Context, err error, slotType string, streamStarted bool) {
 	h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error",
 		fmt.Sprintf("Concurrency limit exceeded for %s, please retry later", slotType), streamStarted)
+}
+
+func (h *GatewayHandler) recordFailedUsage(apiKey *service.ApiKey, account *service.Account, subscription *service.UserSubscription, model string, stream bool, start time.Time) {
+	if apiKey == nil || apiKey.User == nil || account == nil {
+		return
+	}
+
+	durationMs := int(time.Since(start).Milliseconds())
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := h.gatewayService.RecordFailedUsage(ctx, &service.RecordFailedUsageInput{
+			ApiKey:       apiKey,
+			User:         apiKey.User,
+			Account:      account,
+			Subscription: subscription,
+			Model:        model,
+			Stream:       stream,
+			DurationMs:   &durationMs,
+		}); err != nil {
+			log.Printf("Record failed usage failed: %v", err)
+		}
+	}()
 }
 
 func (h *GatewayHandler) handleFailoverExhausted(c *gin.Context, statusCode int, streamStarted bool) {

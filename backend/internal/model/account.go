@@ -285,22 +285,22 @@ func (a *Account) IsInterceptWarmupEnabled() bool {
 
 // IsOpenAI 检查是否为 OpenAI 平台账号
 func (a *Account) IsOpenAI() bool {
-	return a.Platform == PlatformOpenAI
+	return a.Platform == service.PlatformOpenAI
 }
 
 // IsAnthropic 检查是否为 Anthropic 平台账号
 func (a *Account) IsAnthropic() bool {
-	return a.Platform == PlatformAnthropic
+	return a.Platform == service.PlatformAnthropic
 }
 
 // IsOpenAIOAuth 检查是否为 OpenAI OAuth 类型账号
 func (a *Account) IsOpenAIOAuth() bool {
-	return a.IsOpenAI() && a.Type == AccountTypeOAuth
+	return a.IsOpenAI() && a.Type == service.AccountTypeOAuth
 }
 
 // IsOpenAIApiKey 检查是否为 OpenAI API Key 类型账号（Response 账号）
 func (a *Account) IsOpenAIApiKey() bool {
-	return a.IsOpenAI() && a.Type == AccountTypeApiKey
+	return a.IsOpenAI() && a.Type == service.AccountTypeApiKey
 }
 
 // GetOpenAIBaseURL 获取 OpenAI API 基础 URL
@@ -310,7 +310,7 @@ func (a *Account) GetOpenAIBaseURL() string {
 	if !a.IsOpenAI() {
 		return ""
 	}
-	if a.Type == AccountTypeApiKey {
+	if a.Type == service.AccountTypeApiKey {
 		baseURL := a.GetCredential("base_url")
 		if baseURL != "" {
 			return baseURL
@@ -420,17 +420,17 @@ func (a *Account) IsOpenAITokenExpired() bool {
 
 // IsGemini 检查是否为 Gemini 平台账号
 func (a *Account) IsGemini() bool {
-	return a.Platform == PlatformGemini
+	return a.Platform == service.PlatformGemini
 }
 
 // IsGeminiOAuth 检查是否为 Gemini OAuth 类型账号
 func (a *Account) IsGeminiOAuth() bool {
-	return a.IsGemini() && a.Type == AccountTypeOAuth
+	return a.IsGemini() && a.Type == service.AccountTypeOAuth
 }
 
 // IsGeminiApiKey 检查是否为 Gemini API Key 类型账号
 func (a *Account) IsGeminiApiKey() bool {
-	return a.IsGemini() && a.Type == AccountTypeApiKey
+	return a.IsGemini() && a.Type == service.AccountTypeApiKey
 }
 
 // GetGeminiApiKey 获取 Gemini API Key

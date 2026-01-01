@@ -79,6 +79,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 	// Extract model and stream
 	reqModel, _ := reqBody["model"].(string)
 	reqStream, _ := reqBody["stream"].(bool)
+	requestStart := time.Now()
 
 	// 验证 model 必填
 	if reqModel == "" {
@@ -216,6 +217,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				failedAccountIDs[account.ID] = struct{}{}
 				if switchCount >= maxAccountSwitches {
 					lastFailoverStatus = failoverErr.StatusCode
+					h.recordFailedUsage(apiKey, account, subscription, reqModel, reqStream, requestStart)
 					h.handleFailoverExhausted(c, lastFailoverStatus, streamStarted)
 					return
 				}
@@ -225,6 +227,7 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 				continue
 			}
 			// Error response already handled in Forward, just log
+			h.recordFailedUsage(apiKey, account, subscription, reqModel, reqStream, requestStart)
 			log.Printf("Forward request failed: %v", err)
 			return
 		}
@@ -251,6 +254,31 @@ func (h *OpenAIGatewayHandler) Responses(c *gin.Context) {
 func (h *OpenAIGatewayHandler) handleConcurrencyError(c *gin.Context, err error, slotType string, streamStarted bool) {
 	h.handleStreamingAwareError(c, http.StatusTooManyRequests, "rate_limit_error",
 		fmt.Sprintf("Concurrency limit exceeded for %s, please retry later", slotType), streamStarted)
+}
+
+func (h *OpenAIGatewayHandler) recordFailedUsage(apiKey *service.ApiKey, account *service.Account, subscription *service.UserSubscription, model string, stream bool, start time.Time) {
+	if apiKey == nil || apiKey.User == nil || account == nil {
+		return
+	}
+
+	durationMs := int(time.Since(start).Milliseconds())
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		if err := h.gatewayService.RecordFailedUsage(ctx, &service.RecordFailedUsageInput{
+			ApiKey:       apiKey,
+			User:         apiKey.User,
+			Account:      account,
+			Subscription: subscription,
+			Model:        model,
+			Stream:       stream,
+			DurationMs:   &durationMs,
+		}); err != nil {
+			log.Printf("Record failed usage failed: %v", err)
+		}
+	}()
 }
 
 func (h *OpenAIGatewayHandler) handleFailoverExhausted(c *gin.Context, statusCode int, streamStarted bool) {

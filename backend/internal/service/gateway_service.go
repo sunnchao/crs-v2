@@ -1632,6 +1632,17 @@ type RecordUsageInput struct {
 	Subscription *UserSubscription // 可选：订阅信息
 }
 
+type RecordFailedUsageInput struct {
+	ApiKey       *ApiKey
+	User         *User
+	Account      *Account
+	Subscription *UserSubscription
+	Model        string
+	Stream       bool
+	DurationMs   *int
+	RequestID    string
+}
+
 // RecordUsage 记录使用量并扣费（或更新订阅用量）
 func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInput) error {
 	result := input.Result
@@ -1737,6 +1748,44 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 	s.deferredService.ScheduleLastUsedUpdate(account.ID)
 
 	return nil
+}
+
+func (s *GatewayService) RecordFailedUsage(ctx context.Context, input *RecordFailedUsageInput) error {
+	if input == nil || input.ApiKey == nil || input.User == nil || input.Account == nil {
+		return fmt.Errorf("invalid failed usage input")
+	}
+
+	multiplier := s.cfg.Default.RateMultiplier
+	if input.ApiKey.GroupID != nil && input.ApiKey.Group != nil {
+		multiplier = input.ApiKey.Group.RateMultiplier
+	}
+
+	billingType := BillingTypeBalance
+	if input.Subscription != nil && input.ApiKey.Group != nil && input.ApiKey.Group.IsSubscriptionType() {
+		billingType = BillingTypeSubscription
+	}
+
+	usageLog := &UsageLog{
+		UserID:         input.User.ID,
+		ApiKeyID:       input.ApiKey.ID,
+		AccountID:      input.Account.ID,
+		RequestID:      input.RequestID,
+		Model:          input.Model,
+		RateMultiplier: multiplier,
+		BillingType:    billingType,
+		Stream:         input.Stream,
+		DurationMs:     input.DurationMs,
+		CreatedAt:      time.Now(),
+	}
+
+	if input.ApiKey.GroupID != nil {
+		usageLog.GroupID = input.ApiKey.GroupID
+	}
+	if input.Subscription != nil {
+		usageLog.SubscriptionID = &input.Subscription.ID
+	}
+
+	return s.usageLogRepo.Create(ctx, usageLog)
 }
 
 // ForwardCountTokens 转发 count_tokens 请求到上游 API
