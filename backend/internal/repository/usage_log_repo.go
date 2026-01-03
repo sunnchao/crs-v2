@@ -21,7 +21,7 @@ import (
 	"github.com/lib/pq"
 )
 
-const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, billing_type, stream, duration_ms, first_token_ms, created_at"
+const usageLogSelectColumns = "id, user_id, api_key_id, account_id, request_id, model, group_id, subscription_id, input_tokens, output_tokens, cache_creation_tokens, cache_read_tokens, cache_creation_5m_tokens, cache_creation_1h_tokens, input_cost, output_cost, cache_creation_cost, cache_read_cost, total_cost, actual_cost, rate_multiplier, billing_type, stream, duration_ms, first_token_ms, success, error_message, created_at"
 
 type usageLogRepository struct {
 	client *dbent.Client
@@ -98,6 +98,8 @@ func (r *usageLogRepository) Create(ctx context.Context, log *service.UsageLog) 
 			stream,
 			duration_ms,
 			first_token_ms,
+			success,
+			error_message,
 			created_at
 		) VALUES (
 			$1, $2, $3, $4, $5,
@@ -105,7 +107,8 @@ func (r *usageLogRepository) Create(ctx context.Context, log *service.UsageLog) 
 			$8, $9, $10, $11,
 			$12, $13,
 			$14, $15, $16, $17, $18, $19,
-			$20, $21, $22, $23, $24, $25
+			$20, $21, $22, $23, $24,
+			$25, $26, $27
 		)
 		RETURNING id, created_at
 	`
@@ -114,6 +117,7 @@ func (r *usageLogRepository) Create(ctx context.Context, log *service.UsageLog) 
 	subscriptionID := nullInt64(log.SubscriptionID)
 	duration := nullInt(log.DurationMs)
 	firstToken := nullInt(log.FirstTokenMs)
+	errorMsg := nullString(log.ErrorMessage)
 
 	args := []any{
 		log.UserID,
@@ -140,6 +144,8 @@ func (r *usageLogRepository) Create(ctx context.Context, log *service.UsageLog) 
 		log.Stream,
 		duration,
 		firstToken,
+		log.Success,
+		errorMsg,
 		createdAt,
 	}
 	if err := scanSingleRow(ctx, r.sql, query, args, &log.ID, &log.CreatedAt); err != nil {
@@ -1763,6 +1769,8 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		stream              bool
 		durationMs          sql.NullInt64
 		firstTokenMs        sql.NullInt64
+		success             bool
+		errorMessage        sql.NullString
 		createdAt           time.Time
 	)
 
@@ -1792,6 +1800,8 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		&stream,
 		&durationMs,
 		&firstTokenMs,
+		&success,
+		&errorMessage,
 		&createdAt,
 	); err != nil {
 		return nil, err
@@ -1818,6 +1828,7 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 		RateMultiplier:        rateMultiplier,
 		BillingType:           int8(billingType),
 		Stream:                stream,
+		Success:               success,
 		CreatedAt:             createdAt,
 	}
 
@@ -1839,6 +1850,9 @@ func scanUsageLog(scanner interface{ Scan(...any) error }) (*service.UsageLog, e
 	if firstTokenMs.Valid {
 		value := int(firstTokenMs.Int64)
 		log.FirstTokenMs = &value
+	}
+	if errorMessage.Valid {
+		log.ErrorMessage = &errorMessage.String
 	}
 
 	return log, nil
@@ -1910,6 +1924,13 @@ func nullInt(v *int) sql.NullInt64 {
 		return sql.NullInt64{}
 	}
 	return sql.NullInt64{Int64: int64(*v), Valid: true}
+}
+
+func nullString(v *string) sql.NullString {
+	if v == nil {
+		return sql.NullString{}
+	}
+	return sql.NullString{String: *v, Valid: true}
 }
 
 func setToSlice(set map[int64]struct{}) []int64 {

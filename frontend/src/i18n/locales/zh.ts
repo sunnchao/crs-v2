@@ -398,7 +398,11 @@ export default {
     exportExcelFailed: '使用数据导出失败',
     billingType: '消费类型',
     balance: '余额',
-    subscription: '订阅'
+    subscription: '订阅',
+    status: '状态',
+    success: '成功',
+    failed: '失败',
+    errorInfo: '错误信息'
   },
 
   // Redeem

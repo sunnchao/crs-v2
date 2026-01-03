@@ -323,6 +323,34 @@ func (_c *UsageLogCreate) SetNillableFirstTokenMs(v *int) *UsageLogCreate {
 	return _c
 }
 
+// SetSuccess sets the "success" field.
+func (_c *UsageLogCreate) SetSuccess(v bool) *UsageLogCreate {
+	_c.mutation.SetSuccess(v)
+	return _c
+}
+
+// SetNillableSuccess sets the "success" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableSuccess(v *bool) *UsageLogCreate {
+	if v != nil {
+		_c.SetSuccess(*v)
+	}
+	return _c
+}
+
+// SetErrorMessage sets the "error_message" field.
+func (_c *UsageLogCreate) SetErrorMessage(v string) *UsageLogCreate {
+	_c.mutation.SetErrorMessage(v)
+	return _c
+}
+
+// SetNillableErrorMessage sets the "error_message" field if the given value is not nil.
+func (_c *UsageLogCreate) SetNillableErrorMessage(v *string) *UsageLogCreate {
+	if v != nil {
+		_c.SetErrorMessage(*v)
+	}
+	return _c
+}
+
 // SetCreatedAt sets the "created_at" field.
 func (_c *UsageLogCreate) SetCreatedAt(v time.Time) *UsageLogCreate {
 	_c.mutation.SetCreatedAt(v)
@@ -457,6 +485,10 @@ func (_c *UsageLogCreate) defaults() {
 		v := usagelog.DefaultStream
 		_c.mutation.SetStream(v)
 	}
+	if _, ok := _c.mutation.Success(); !ok {
+		v := usagelog.DefaultSuccess
+		_c.mutation.SetSuccess(v)
+	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		v := usagelog.DefaultCreatedAt()
 		_c.mutation.SetCreatedAt(v)
@@ -534,6 +566,14 @@ func (_c *UsageLogCreate) check() error {
 	}
 	if _, ok := _c.mutation.Stream(); !ok {
 		return &ValidationError{Name: "stream", err: errors.New(`ent: missing required field "UsageLog.stream"`)}
+	}
+	if _, ok := _c.mutation.Success(); !ok {
+		return &ValidationError{Name: "success", err: errors.New(`ent: missing required field "UsageLog.success"`)}
+	}
+	if v, ok := _c.mutation.ErrorMessage(); ok {
+		if err := usagelog.ErrorMessageValidator(v); err != nil {
+			return &ValidationError{Name: "error_message", err: fmt.Errorf(`ent: validator failed for field "UsageLog.error_message": %w`, err)}
+		}
 	}
 	if _, ok := _c.mutation.CreatedAt(); !ok {
 		return &ValidationError{Name: "created_at", err: errors.New(`ent: missing required field "UsageLog.created_at"`)}
@@ -649,6 +689,14 @@ func (_c *UsageLogCreate) createSpec() (*UsageLog, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.FirstTokenMs(); ok {
 		_spec.SetField(usagelog.FieldFirstTokenMs, field.TypeInt, value)
 		_node.FirstTokenMs = &value
+	}
+	if value, ok := _c.mutation.Success(); ok {
+		_spec.SetField(usagelog.FieldSuccess, field.TypeBool, value)
+		_node.Success = value
+	}
+	if value, ok := _c.mutation.ErrorMessage(); ok {
+		_spec.SetField(usagelog.FieldErrorMessage, field.TypeString, value)
+		_node.ErrorMessage = &value
 	}
 	if value, ok := _c.mutation.CreatedAt(); ok {
 		_spec.SetField(usagelog.FieldCreatedAt, field.TypeTime, value)
@@ -1199,6 +1247,36 @@ func (u *UsageLogUpsert) ClearFirstTokenMs() *UsageLogUpsert {
 	return u
 }
 
+// SetSuccess sets the "success" field.
+func (u *UsageLogUpsert) SetSuccess(v bool) *UsageLogUpsert {
+	u.Set(usagelog.FieldSuccess, v)
+	return u
+}
+
+// UpdateSuccess sets the "success" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateSuccess() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldSuccess)
+	return u
+}
+
+// SetErrorMessage sets the "error_message" field.
+func (u *UsageLogUpsert) SetErrorMessage(v string) *UsageLogUpsert {
+	u.Set(usagelog.FieldErrorMessage, v)
+	return u
+}
+
+// UpdateErrorMessage sets the "error_message" field to the value that was provided on create.
+func (u *UsageLogUpsert) UpdateErrorMessage() *UsageLogUpsert {
+	u.SetExcluded(usagelog.FieldErrorMessage)
+	return u
+}
+
+// ClearErrorMessage clears the value of the "error_message" field.
+func (u *UsageLogUpsert) ClearErrorMessage() *UsageLogUpsert {
+	u.SetNull(usagelog.FieldErrorMessage)
+	return u
+}
+
 // UpdateNewValues updates the mutable fields using the new values that were set on create.
 // Using this option is equivalent to using:
 //
@@ -1717,6 +1795,41 @@ func (u *UsageLogUpsertOne) UpdateFirstTokenMs() *UsageLogUpsertOne {
 func (u *UsageLogUpsertOne) ClearFirstTokenMs() *UsageLogUpsertOne {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearFirstTokenMs()
+	})
+}
+
+// SetSuccess sets the "success" field.
+func (u *UsageLogUpsertOne) SetSuccess(v bool) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetSuccess(v)
+	})
+}
+
+// UpdateSuccess sets the "success" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateSuccess() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateSuccess()
+	})
+}
+
+// SetErrorMessage sets the "error_message" field.
+func (u *UsageLogUpsertOne) SetErrorMessage(v string) *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetErrorMessage(v)
+	})
+}
+
+// UpdateErrorMessage sets the "error_message" field to the value that was provided on create.
+func (u *UsageLogUpsertOne) UpdateErrorMessage() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateErrorMessage()
+	})
+}
+
+// ClearErrorMessage clears the value of the "error_message" field.
+func (u *UsageLogUpsertOne) ClearErrorMessage() *UsageLogUpsertOne {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearErrorMessage()
 	})
 }
 
@@ -2404,6 +2517,41 @@ func (u *UsageLogUpsertBulk) UpdateFirstTokenMs() *UsageLogUpsertBulk {
 func (u *UsageLogUpsertBulk) ClearFirstTokenMs() *UsageLogUpsertBulk {
 	return u.Update(func(s *UsageLogUpsert) {
 		s.ClearFirstTokenMs()
+	})
+}
+
+// SetSuccess sets the "success" field.
+func (u *UsageLogUpsertBulk) SetSuccess(v bool) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetSuccess(v)
+	})
+}
+
+// UpdateSuccess sets the "success" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateSuccess() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateSuccess()
+	})
+}
+
+// SetErrorMessage sets the "error_message" field.
+func (u *UsageLogUpsertBulk) SetErrorMessage(v string) *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.SetErrorMessage(v)
+	})
+}
+
+// UpdateErrorMessage sets the "error_message" field to the value that was provided on create.
+func (u *UsageLogUpsertBulk) UpdateErrorMessage() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.UpdateErrorMessage()
+	})
+}
+
+// ClearErrorMessage clears the value of the "error_message" field.
+func (u *UsageLogUpsertBulk) ClearErrorMessage() *UsageLogUpsertBulk {
+	return u.Update(func(s *UsageLogUpsert) {
+		s.ClearErrorMessage()
 	})
 }
 

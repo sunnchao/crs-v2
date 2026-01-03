@@ -1641,6 +1641,7 @@ type RecordFailedUsageInput struct {
 	Stream       bool
 	DurationMs   *int
 	RequestID    string
+	ErrorMessage string // 错误信息
 }
 
 // RecordUsage 记录使用量并扣费（或更新订阅用量）
@@ -1702,6 +1703,8 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 		Stream:              result.Stream,
 		DurationMs:          &durationMs,
 		FirstTokenMs:        result.FirstTokenMs,
+		Success:             true, // 成功的请求
+		ErrorMessage:        nil,
 		CreatedAt:           time.Now(),
 	}
 
@@ -1765,6 +1768,11 @@ func (s *GatewayService) RecordFailedUsage(ctx context.Context, input *RecordFai
 		billingType = BillingTypeSubscription
 	}
 
+	var errorMsg *string
+	if input.ErrorMessage != "" {
+		errorMsg = &input.ErrorMessage
+	}
+
 	usageLog := &UsageLog{
 		UserID:         input.User.ID,
 		ApiKeyID:       input.ApiKey.ID,
@@ -1775,6 +1783,8 @@ func (s *GatewayService) RecordFailedUsage(ctx context.Context, input *RecordFai
 		BillingType:    billingType,
 		Stream:         input.Stream,
 		DurationMs:     input.DurationMs,
+		Success:        false, // 失败的请求
+		ErrorMessage:   errorMsg,
 		CreatedAt:      time.Now(),
 	}
 

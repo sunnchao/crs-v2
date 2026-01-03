@@ -97,6 +97,16 @@ func (UsageLog) Fields() []ent.Field {
 			Optional().
 			Nillable(),
 
+		// 请求状态字段
+		field.Bool("success").
+			Default(true).
+			Comment("请求是否成功"),
+		field.String("error_message").
+			MaxLen(1000).
+			Optional().
+			Nillable().
+			Comment("错误信息（失败时记录）"),
+
 		// 时间戳（只有 created_at，日志不可修改）
 		field.Time("created_at").
 			Default(time.Now).

@@ -402,7 +402,11 @@ export default {
     exportExcelFailed: 'Failed to export usage data',
     billingType: 'Billing',
     balance: 'Balance',
-    subscription: 'Subscription'
+    subscription: 'Subscription',
+    status: 'Status',
+    success: 'Success',
+    failed: 'Failed',
+    errorInfo: 'Error Info'
   },
 
   // Redeem

@@ -495,6 +495,10 @@ export interface UsageLog {
   stream: boolean
   duration_ms: number
   first_token_ms: number | null
+
+  success: boolean // 请求是否成功
+  error_message: string | null // 错误信息（失败时记录）
+
   created_at: string
 
   user?: User

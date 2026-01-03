@@ -39,6 +39,9 @@ type UsageLog struct {
 	DurationMs   *int
 	FirstTokenMs *int
 
+	Success      bool
+	ErrorMessage *string
+
 	CreatedAt time.Time
 
 	User         *User
