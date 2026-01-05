@@ -35,14 +35,15 @@ builds:
 # 跳过 archives
 archives: []
 
-# 跳过 checksum
 checksum:
-  disable: true
+  name_template: 'checksums.txt'
+  algorithm: sha256
 
 changelog:
+  # 禁用自动 changelog，完全使用 tag 消息
   disable: true
 
-# 仅 GHCR x86_64 镜像
+# Docker images
 dockers:
   - id: ghcr-arm64
     goos: linux
@@ -86,16 +87,16 @@ release:
   skip_upload: true
   header: |
     > AI API Gateway Platform - 将 AI 订阅配额分发和管理
-    > ⚡ Simple Release: 仅包含 x86_64 GHCR 镜像
 
     {{ .Env.TAG_MESSAGE }}
 
   footer: |
+
     ---
 
     ## 📥 Installation
 
-    **Docker (x86_64 only):**
+    **Docker:**
     ```bash
     docker pull ghcr.io/{{ .Env.GITHUB_REPO_OWNER_LOWER }}/sub2api:{{ .Version }}
     ```
