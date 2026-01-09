@@ -426,7 +426,8 @@ export default {
     billingType: 'Billing',
     balance: 'Balance',
     subscription: 'Subscription',
-    imageUnit: ' images'
+    imageUnit: ' images',
+    userAgent: 'User-Agent'
   },
 
   // Redeem
@@ -858,6 +859,15 @@ export default {
       imagePricing: {
         title: 'Image Generation Pricing',
         description: 'Configure pricing for gemini-3-pro-image model. Leave empty to use default prices.'
+      },
+      claudeCode: {
+        title: 'Claude Code Client Restriction',
+        tooltip: 'When enabled, this group only allows official Claude Code clients. Non-Claude Code requests will be rejected or fallback to the specified group.',
+        enabled: 'Claude Code Only',
+        disabled: 'Allow All Clients',
+        fallbackGroup: 'Fallback Group',
+        fallbackHint: 'Non-Claude Code requests will use this group. Leave empty to reject directly.',
+        noFallback: 'No Fallback (Reject)'
       }
     },
 
@@ -1562,6 +1572,7 @@ export default {
         protocol: 'Protocol',
         address: 'Address',
         status: 'Status',
+        accounts: 'Accounts',
         actions: 'Actions'
       },
       testConnection: 'Test Connection',
