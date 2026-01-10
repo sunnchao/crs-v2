@@ -82,6 +82,8 @@ func TestAPIContracts(t *testing.T) {
 					"name": "Key One",
 					"group_id": null,
 					"status": "active",
+					"ip_whitelist": null,
+					"ip_blacklist": null,
 					"created_at": "2025-01-02T03:04:05Z",
 					"updated_at": "2025-01-02T03:04:05Z"
 				}
@@ -116,6 +118,8 @@ func TestAPIContracts(t *testing.T) {
 							"name": "Key One",
 							"group_id": null,
 							"status": "active",
+							"ip_whitelist": null,
+							"ip_blacklist": null,
 							"created_at": "2025-01-02T03:04:05Z",
 							"updated_at": "2025-01-02T03:04:05Z"
 						}
@@ -394,7 +398,7 @@ func newContractDeps(t *testing.T) *contractDeps {
 	settingRepo := newStubSettingRepo()
 	settingService := service.NewSettingService(settingRepo, cfg)
 
-	authHandler := handler.NewAuthHandler(cfg, nil, userService, settingService)
+	authHandler := handler.NewAuthHandler(cfg, nil, userService, settingService, nil)
 	apiKeyHandler := handler.NewAPIKeyHandler(apiKeyService)
 	usageHandler := handler.NewUsageHandler(usageService, apiKeyService)
 	adminSettingHandler := adminhandler.NewSettingHandler(settingService, nil, nil)
@@ -568,6 +572,10 @@ func (stubGroupRepo) Create(ctx context.Context, group *service.Group) error {
 }
 
 func (stubGroupRepo) GetByID(ctx context.Context, id int64) (*service.Group, error) {
+	return nil, service.ErrGroupNotFound
+}
+
+func (stubGroupRepo) GetByIDLite(ctx context.Context, id int64) (*service.Group, error) {
 	return nil, service.ErrGroupNotFound
 }
 
