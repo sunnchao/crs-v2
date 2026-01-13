@@ -153,12 +153,6 @@
             }}</span>
           </template>
 
-          <template #cell-account="{ row }">
-            <span class="text-sm text-gray-900 dark:text-white">{{
-              row.account?.name || '-'
-            }}</span>
-          </template>
-
           <template #cell-group="{ row }">
             <span
               v-if="row.group"
@@ -481,7 +475,7 @@ const usageStats = ref<UsageStatsResponse | null>(null)
 
 const columns = computed<Column[]>(() => [
   { key: 'api_key', label: t('usage.apiKeyFilter'), sortable: false },
-  { key: 'account', label: t('usage.account'), sortable: false },
+  // { key: 'account', label: t('usage.account'), sortable: false },
   { key: 'group', label: t('usage.group'), sortable: false },
   { key: 'model', label: t('usage.model'), sortable: true },
   { key: 'stream', label: t('usage.type'), sortable: false },
