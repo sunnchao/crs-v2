@@ -14,6 +14,9 @@ backend/server
 backend/sub2api
 backend/main
 
+# Go 测试二进制
+*.test
+
 # 测试覆盖率
 *.out
 coverage.html
@@ -122,9 +125,7 @@ backend/cmd/server/server
 deploy/docker-compose.override.yml
 .gocache/
 vite.config.js
-!docs/
 docs/*
-!docs/dependency-security.md
 
 config.yaml
 .installed

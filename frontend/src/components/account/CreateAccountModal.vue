@@ -166,7 +166,7 @@
           >
             <div
               :class="[
-                'flex h-8 w-8 items-center justify-center rounded-lg',
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
                 accountCategory === 'oauth-based'
                   ? 'bg-orange-500 text-white'
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
@@ -196,7 +196,7 @@
           >
             <div
               :class="[
-                'flex h-8 w-8 items-center justify-center rounded-lg',
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
                 accountCategory === 'apikey'
                   ? 'bg-purple-500 text-white'
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
@@ -232,7 +232,7 @@
           >
             <div
               :class="[
-                'flex h-8 w-8 items-center justify-center rounded-lg',
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
                 accountCategory === 'oauth-based'
                   ? 'bg-green-500 text-white'
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
@@ -258,7 +258,7 @@
           >
             <div
               :class="[
-                'flex h-8 w-8 items-center justify-center rounded-lg',
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
                 accountCategory === 'apikey'
                   ? 'bg-purple-500 text-white'
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
@@ -302,7 +302,7 @@
           >
             <div
               :class="[
-                'flex h-8 w-8 items-center justify-center rounded-lg',
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
                 accountCategory === 'oauth-based'
                   ? 'bg-blue-500 text-white'
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
@@ -332,7 +332,7 @@
           >
             <div
               :class="[
-                'flex h-8 w-8 items-center justify-center rounded-lg',
+                'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
                 accountCategory === 'apikey'
                   ? 'bg-purple-500 text-white'
                   : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
@@ -397,7 +397,7 @@
             >
               <div
                 :class="[
-                  'flex h-8 w-8 items-center justify-center rounded-lg',
+                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
                   geminiOAuthType === 'google_one'
                     ? 'bg-purple-500 text-white'
                     : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
@@ -440,7 +440,7 @@
             >
               <div
                 :class="[
-                  'flex h-8 w-8 items-center justify-center rounded-lg',
+                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
                   geminiOAuthType === 'code_assist'
                     ? 'bg-blue-500 text-white'
                     : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
@@ -518,7 +518,7 @@
             >
               <div
                 :class="[
-                  'flex h-8 w-8 items-center justify-center rounded-lg',
+                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
                   geminiOAuthType === 'ai_studio'
                     ? 'bg-amber-500 text-white'
                     : 'bg-gray-100 text-gray-500 dark:bg-dark-600 dark:text-gray-400'
@@ -621,7 +621,7 @@
           <div
             class="flex items-center gap-3 rounded-lg border-2 border-purple-500 bg-purple-50 p-3 dark:bg-purple-900/20"
           >
-            <div class="flex h-8 w-8 items-center justify-center rounded-lg bg-purple-500 text-white">
+            <div class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-purple-500 text-white">
               <Icon name="key" size="sm" />
             </div>
             <div>
@@ -1976,6 +1976,16 @@ const addPresetMapping = (from: string, to: string) => {
 const toggleErrorCode = (code: number) => {
   const index = selectedErrorCodes.value.indexOf(code)
   if (index === -1) {
+    // Adding code - check for 429/529 warning
+    if (code === 429) {
+      if (!confirm(t('admin.accounts.customErrorCodes429Warning'))) {
+        return
+      }
+    } else if (code === 529) {
+      if (!confirm(t('admin.accounts.customErrorCodes529Warning'))) {
+        return
+      }
+    }
     selectedErrorCodes.value.push(code)
   } else {
     selectedErrorCodes.value.splice(index, 1)
@@ -1992,6 +2002,16 @@ const addCustomErrorCode = () => {
   if (selectedErrorCodes.value.includes(code)) {
     appStore.showInfo(t('admin.accounts.errorCodeExists'))
     return
+  }
+  // Check for 429/529 warning
+  if (code === 429) {
+    if (!confirm(t('admin.accounts.customErrorCodes429Warning'))) {
+      return
+    }
+  } else if (code === 529) {
+    if (!confirm(t('admin.accounts.customErrorCodes529Warning'))) {
+      return
+    }
   }
   selectedErrorCodes.value.push(code)
   customErrorCodeInput.value = null
@@ -2462,6 +2482,7 @@ const handleCookieAuth = async (sessionKey: string) => {
 
         await adminAPI.accounts.create({
           name: accountName,
+          notes: form.notes,
           platform: form.platform,
           type: addMethod.value, // Use addMethod as type: 'oauth' or 'setup-token'
           credentials,
@@ -2469,6 +2490,8 @@ const handleCookieAuth = async (sessionKey: string) => {
           proxy_id: form.proxy_id,
           concurrency: form.concurrency,
           priority: form.priority,
+          group_ids: form.group_ids,
+          expires_at: form.expires_at,
           auto_pause_on_expired: autoPauseOnExpired.value
         })
 

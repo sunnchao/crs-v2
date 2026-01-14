@@ -50,6 +50,7 @@ export interface RegisterRequest {
   password: string
   verify_code?: string
   turnstile_token?: string
+  promo_code?: string
 }
 
 export interface SendVerifyCodeRequest {
@@ -73,6 +74,8 @@ export interface PublicSettings {
   api_base_url: string
   contact_info: string
   doc_url: string
+  home_content: string
+  linuxdo_oauth_enabled: boolean
   version: string
 }
 
@@ -263,6 +266,9 @@ export interface Group {
   image_price_1k: number | null
   image_price_2k: number | null
   image_price_4k: number | null
+  // Claude Code 客户端限制
+  claude_code_only: boolean
+  fallback_group_id: number | null
   account_count?: number
   created_at: string
   updated_at: string
@@ -275,6 +281,8 @@ export interface ApiKey {
   name: string
   group_id: number | null
   status: 'active' | 'inactive'
+  ip_whitelist: string[]
+  ip_blacklist: string[]
   created_at: string
   updated_at: string
   group?: Group
@@ -284,12 +292,16 @@ export interface CreateApiKeyRequest {
   name: string
   group_id?: number | null
   custom_key?: string // Optional custom API Key
+  ip_whitelist?: string[]
+  ip_blacklist?: string[]
 }
 
 export interface UpdateApiKeyRequest {
   name?: string
   group_id?: number | null
   status?: 'active' | 'inactive'
+  ip_whitelist?: string[]
+  ip_blacklist?: string[]
 }
 
 export interface CreateGroupRequest {
@@ -298,6 +310,15 @@ export interface CreateGroupRequest {
   platform?: GroupPlatform
   rate_multiplier?: number
   is_exclusive?: boolean
+  subscription_type?: SubscriptionType
+  daily_limit_usd?: number | null
+  weekly_limit_usd?: number | null
+  monthly_limit_usd?: number | null
+  image_price_1k?: number | null
+  image_price_2k?: number | null
+  image_price_4k?: number | null
+  claude_code_only?: boolean
+  fallback_group_id?: number | null
 }
 
 export interface UpdateGroupRequest {
@@ -307,6 +328,15 @@ export interface UpdateGroupRequest {
   rate_multiplier?: number
   is_exclusive?: boolean
   status?: 'active' | 'inactive'
+  subscription_type?: SubscriptionType
+  daily_limit_usd?: number | null
+  weekly_limit_usd?: number | null
+  monthly_limit_usd?: number | null
+  image_price_1k?: number | null
+  image_price_2k?: number | null
+  image_price_4k?: number | null
+  claude_code_only?: boolean
+  fallback_group_id?: number | null
 }
 
 // ==================== Account & Proxy Types ====================
@@ -538,9 +568,6 @@ export interface UpdateProxyRequest {
 
 export type RedeemCodeType = 'balance' | 'concurrency' | 'subscription'
 
-// 消费类型: 0=钱包余额, 1=订阅套餐
-export type BillingType = 0 | 1
-
 export interface UsageLog {
   id: number
   user_id: number
@@ -567,7 +594,6 @@ export interface UsageLog {
   actual_cost: number
   rate_multiplier: number
 
-  billing_type: BillingType
   stream: boolean
   duration_ms: number
   first_token_ms: number | null
@@ -575,6 +601,12 @@ export interface UsageLog {
   // 图片生成字段
   image_count: number
   image_size: string | null
+
+  // User-Agent
+  user_agent: string | null
+
+  // IP 地址（仅管理员可见）
+  ip_address: string | null
 
   created_at: string
 
@@ -620,6 +652,9 @@ export interface DashboardStats {
   total_users: number
   today_new_users: number // 今日新增用户数
   active_users: number // 今日有请求的用户数
+  hourly_active_users: number // 当前小时活跃用户数（UTC）
+  stats_updated_at: string // 统计更新时间（UTC RFC3339）
+  stats_stale: boolean // 统计是否过期
 
   // API Key 统计
   total_api_keys: number
@@ -805,7 +840,6 @@ export interface UsageQueryParams {
   group_id?: number
   model?: string
   stream?: boolean
-  billing_type?: number
   start_date?: string
   end_date?: string
 }
@@ -930,4 +964,45 @@ export interface UpdateUserAttributeRequest {
 
 export interface UserAttributeValuesMap {
   [attributeId: number]: string
+}
+
+// ==================== Promo Code Types ====================
+
+export interface PromoCode {
+  id: number
+  code: string
+  bonus_amount: number
+  max_uses: number
+  used_count: number
+  status: 'active' | 'disabled'
+  expires_at: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PromoCodeUsage {
+  id: number
+  promo_code_id: number
+  user_id: number
+  bonus_amount: number
+  used_at: string
+  user?: User
+}
+
+export interface CreatePromoCodeRequest {
+  code?: string
+  bonus_amount: number
+  max_uses?: number
+  expires_at?: number | null
+  notes?: string
+}
+
+export interface UpdatePromoCodeRequest {
+  code?: string
+  bonus_amount?: number
+  max_uses?: number
+  status?: 'active' | 'disabled'
+  expires_at?: number | null
+  notes?: string
 }

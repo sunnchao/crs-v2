@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	mathrand "math/rand"
+	"net"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -26,6 +27,32 @@ const (
 	antigravityRetryBaseDelay   = 1 * time.Second
 	antigravityRetryMaxDelay    = 16 * time.Second
 )
+
+// isAntigravityConnectionError 判断是否为连接错误（网络超时、DNS 失败、连接拒绝）
+func isAntigravityConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// 检查超时错误
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+
+	// 检查连接错误（DNS 失败、连接拒绝）
+	var opErr *net.OpError
+	return errors.As(err, &opErr)
+}
+
+// shouldAntigravityFallbackToNextURL 判断是否应切换到下一个 URL
+// 仅连接错误和 HTTP 429 触发 URL 降级
+func shouldAntigravityFallbackToNextURL(err error, statusCode int) bool {
+	if isAntigravityConnectionError(err) {
+		return true
+	}
+	return statusCode == http.StatusTooManyRequests
+}
 
 // getSessionID 从 gin.Context 获取 session_id（用于日志追踪）
 func getSessionID(c *gin.Context) string {
@@ -67,6 +94,7 @@ var antigravityPrefixMapping = []struct {
 	{"gemini-3-flash", "gemini-3-flash"},             // gemini-3-flash → 3-flash
 	{"gemini-2.5-flash-image", "gemini-3-pro-image"}, // gemini-2.5-flash-image → 3-pro-image
 	{"gemini-3-pro-image", "gemini-3-pro-image"},     // gemini-3-pro-image-preview 等
+	{"gemini-3-flash", "gemini-3-flash"},             // gemini-3-flash-preview 等 → gemini-3-flash
 	{"claude-3-5-sonnet", "claude-sonnet-4-5"},       // 旧版 claude-3-5-sonnet-xxx
 	{"claude-sonnet-4-5", "claude-sonnet-4-5"},       // claude-sonnet-4-5-xxx
 	{"claude-haiku-4-5", "claude-sonnet-4-5"},        // claude-haiku-4-5-xxx → sonnet
@@ -182,45 +210,70 @@ func (s *AntigravityGatewayService) TestConnection(ctx context.Context, account 
 		return nil, fmt.Errorf("构建请求失败: %w", err)
 	}
 
-	// 构建 HTTP 请求（总是使用流式 endpoint，与官方客户端一致）
-	req, err := antigravity.NewAPIRequest(ctx, "streamGenerateContent", accessToken, requestBody)
-	if err != nil {
-		return nil, err
-	}
-
-	// 调试日志：Test 请求信息
-	log.Printf("[antigravity-Test] account=%s request_size=%d url=%s", account.Name, len(requestBody), req.URL.String())
-
 	// 代理 URL
 	proxyURL := ""
 	if account.ProxyID != nil && account.Proxy != nil {
 		proxyURL = account.Proxy.URL()
 	}
 
-	// 发送请求
-	resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
-	if err != nil {
-		return nil, fmt.Errorf("请求失败: %w", err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	// 读取响应
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-	if err != nil {
-		return nil, fmt.Errorf("读取响应失败: %w", err)
+	// URL fallback 循环
+	availableURLs := antigravity.DefaultURLAvailability.GetAvailableURLs()
+	if len(availableURLs) == 0 {
+		availableURLs = antigravity.BaseURLs // 所有 URL 都不可用时，重试所有
 	}
 
-	if resp.StatusCode >= 400 {
-		return nil, fmt.Errorf("API 返回 %d: %s", resp.StatusCode, string(respBody))
+	var lastErr error
+	for urlIdx, baseURL := range availableURLs {
+		// 构建 HTTP 请求（总是使用流式 endpoint，与官方客户端一致）
+		req, err := antigravity.NewAPIRequestWithURL(ctx, baseURL, "streamGenerateContent", accessToken, requestBody)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+
+		// 调试日志：Test 请求信息
+		log.Printf("[antigravity-Test] account=%s request_size=%d url=%s", account.Name, len(requestBody), req.URL.String())
+
+		// 发送请求
+		resp, err := s.httpUpstream.Do(req, proxyURL, account.ID, account.Concurrency)
+		if err != nil {
+			lastErr = fmt.Errorf("请求失败: %w", err)
+			if shouldAntigravityFallbackToNextURL(err, 0) && urlIdx < len(availableURLs)-1 {
+				antigravity.DefaultURLAvailability.MarkUnavailable(baseURL)
+				log.Printf("[antigravity-Test] URL fallback: %s -> %s", baseURL, availableURLs[urlIdx+1])
+				continue
+			}
+			return nil, lastErr
+		}
+
+		// 读取响应
+		respBody, err := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		_ = resp.Body.Close() // 立即关闭，避免循环内 defer 导致的资源泄漏
+		if err != nil {
+			return nil, fmt.Errorf("读取响应失败: %w", err)
+		}
+
+		// 检查是否需要 URL 降级
+		if shouldAntigravityFallbackToNextURL(nil, resp.StatusCode) && urlIdx < len(availableURLs)-1 {
+			antigravity.DefaultURLAvailability.MarkUnavailable(baseURL)
+			log.Printf("[antigravity-Test] URL fallback (HTTP %d): %s -> %s", resp.StatusCode, baseURL, availableURLs[urlIdx+1])
+			continue
+		}
+
+		if resp.StatusCode >= 400 {
+			return nil, fmt.Errorf("API 返回 %d: %s", resp.StatusCode, string(respBody))
+		}
+
+		// 解析流式响应，提取文本
+		text := extractTextFromSSEResponse(respBody)
+
+		return &TestConnectionResult{
+			Text:        text,
+			MappedModel: mappedModel,
+		}, nil
 	}
 
-	// 解析流式响应，提取文本
-	text := extractTextFromSSEResponse(respBody)
-
-	return &TestConnectionResult{
-		Text:        text,
-		MappedModel: mappedModel,
-	}, nil
+	return nil, lastErr
 }
 
 // buildGeminiTestRequest 构建 Gemini 格式测试请求
@@ -451,6 +504,7 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 
 	originalModel := claudeReq.Model
 	mappedModel := s.getMappedModel(account, claudeReq.Model)
+	quotaScope, _ := resolveAntigravityQuotaScope(originalModel)
 
 	// 获取 access_token
 	if s.tokenProvider == nil {
@@ -470,6 +524,9 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		proxyURL = account.Proxy.URL()
 	}
 
+	// Sanitize thinking blocks (clean cache_control and flatten history thinking)
+	sanitizeThinkingBlocks(&claudeReq)
+
 	// 获取转换选项
 	// Antigravity 上游要求必须包含身份提示词，否则会返回 429
 	transformOpts := s.getClaudeTransformOptions(ctx)
@@ -481,66 +538,142 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		return nil, fmt.Errorf("transform request: %w", err)
 	}
 
+	// Safety net: ensure no cache_control leaked into Gemini request
+	geminiBody = cleanCacheControlFromGeminiJSON(geminiBody)
+
 	// Antigravity 上游只支持流式请求，统一使用 streamGenerateContent
 	// 如果客户端请求非流式，在响应处理阶段会收集完整流式响应后转换返回
 	action := "streamGenerateContent"
 
+	// URL fallback 循环
+	availableURLs := antigravity.DefaultURLAvailability.GetAvailableURLs()
+	if len(availableURLs) == 0 {
+		availableURLs = antigravity.BaseURLs // 所有 URL 都不可用时，重试所有
+	}
+
 	// 重试循环
 	var resp *http.Response
-	for attempt := 1; attempt <= antigravityMaxRetries; attempt++ {
-		// 检查 context 是否已取消（客户端断开连接）
-		select {
-		case <-ctx.Done():
-			log.Printf("%s status=context_canceled error=%v", prefix, ctx.Err())
-			return nil, ctx.Err()
-		default:
-		}
+urlFallbackLoop:
+	for urlIdx, baseURL := range availableURLs {
+		for attempt := 1; attempt <= antigravityMaxRetries; attempt++ {
+			// 检查 context 是否已取消（客户端断开连接）
+			select {
+			case <-ctx.Done():
+				log.Printf("%s status=context_canceled error=%v", prefix, ctx.Err())
+				return nil, ctx.Err()
+			default:
+			}
 
-		upstreamReq, err := antigravity.NewAPIRequest(ctx, action, accessToken, geminiBody)
-		if err != nil {
-			return nil, err
-		}
+			upstreamReq, err := antigravity.NewAPIRequestWithURL(ctx, baseURL, action, accessToken, geminiBody)
+			if err != nil {
+				return nil, err
+			}
 
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
-		if err != nil {
-			if attempt < antigravityMaxRetries {
-				log.Printf("%s status=request_failed retry=%d/%d error=%v", prefix, attempt, antigravityMaxRetries, err)
-				if !sleepAntigravityBackoffWithContext(ctx, attempt) {
-					log.Printf("%s status=context_canceled_during_backoff", prefix)
-					return nil, ctx.Err()
+			resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+			if err != nil {
+				safeErr := sanitizeUpstreamErrorMessage(err.Error())
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					UpstreamStatusCode: 0,
+					Kind:               "request_error",
+					Message:            safeErr,
+				})
+				// 检查是否应触发 URL 降级
+				if shouldAntigravityFallbackToNextURL(err, 0) && urlIdx < len(availableURLs)-1 {
+					antigravity.DefaultURLAvailability.MarkUnavailable(baseURL)
+					log.Printf("%s URL fallback (connection error): %s -> %s", prefix, baseURL, availableURLs[urlIdx+1])
+					continue urlFallbackLoop
 				}
-				continue
-			}
-			log.Printf("%s status=request_failed retries_exhausted error=%v", prefix, err)
-			return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed after retries")
-		}
-
-		if resp.StatusCode >= 400 && s.shouldRetryUpstreamError(resp.StatusCode) {
-			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-			_ = resp.Body.Close()
-
-			if attempt < antigravityMaxRetries {
-				log.Printf("%s status=%d retry=%d/%d body=%s", prefix, resp.StatusCode, attempt, antigravityMaxRetries, truncateForLog(respBody, 500))
-				if !sleepAntigravityBackoffWithContext(ctx, attempt) {
-					log.Printf("%s status=context_canceled_during_backoff", prefix)
-					return nil, ctx.Err()
+				if attempt < antigravityMaxRetries {
+					log.Printf("%s status=request_failed retry=%d/%d error=%v", prefix, attempt, antigravityMaxRetries, err)
+					if !sleepAntigravityBackoffWithContext(ctx, attempt) {
+						log.Printf("%s status=context_canceled_during_backoff", prefix)
+						return nil, ctx.Err()
+					}
+					continue
 				}
-				continue
+				log.Printf("%s status=request_failed retries_exhausted error=%v", prefix, err)
+				setOpsUpstreamError(c, 0, safeErr, "")
+				return nil, s.writeClaudeError(c, http.StatusBadGateway, "upstream_error", "Upstream request failed after retries")
 			}
-			// 所有重试都失败，标记限流状态
-			if resp.StatusCode == 429 {
-				s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody)
-			}
-			// 最后一次尝试也失败
-			resp = &http.Response{
-				StatusCode: resp.StatusCode,
-				Header:     resp.Header.Clone(),
-				Body:       io.NopCloser(bytes.NewReader(respBody)),
-			}
-			break
-		}
 
-		break
+			// 检查是否应触发 URL 降级（仅 429）
+			if resp.StatusCode == http.StatusTooManyRequests && urlIdx < len(availableURLs)-1 {
+				respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+				_ = resp.Body.Close()
+				upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
+				upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+				logBody := s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBody
+				maxBytes := 2048
+				if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes > 0 {
+					maxBytes = s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+				}
+				upstreamDetail := ""
+				if logBody {
+					upstreamDetail = truncateString(string(respBody), maxBytes)
+				}
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "retry",
+					Message:            upstreamMsg,
+					Detail:             upstreamDetail,
+				})
+				antigravity.DefaultURLAvailability.MarkUnavailable(baseURL)
+				log.Printf("%s URL fallback (HTTP 429): %s -> %s body=%s", prefix, baseURL, availableURLs[urlIdx+1], truncateForLog(respBody, 200))
+				continue urlFallbackLoop
+			}
+
+			if resp.StatusCode >= 400 && s.shouldRetryUpstreamError(resp.StatusCode) {
+				respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+				_ = resp.Body.Close()
+
+				if attempt < antigravityMaxRetries {
+					upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
+					upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+					logBody := s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBody
+					maxBytes := 2048
+					if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes > 0 {
+						maxBytes = s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+					}
+					upstreamDetail := ""
+					if logBody {
+						upstreamDetail = truncateString(string(respBody), maxBytes)
+					}
+					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+						Platform:           account.Platform,
+						AccountID:          account.ID,
+						UpstreamStatusCode: resp.StatusCode,
+						UpstreamRequestID:  resp.Header.Get("x-request-id"),
+						Kind:               "retry",
+						Message:            upstreamMsg,
+						Detail:             upstreamDetail,
+					})
+					log.Printf("%s status=%d retry=%d/%d body=%s", prefix, resp.StatusCode, attempt, antigravityMaxRetries, truncateForLog(respBody, 500))
+					if !sleepAntigravityBackoffWithContext(ctx, attempt) {
+						log.Printf("%s status=context_canceled_during_backoff", prefix)
+						return nil, ctx.Err()
+					}
+					continue
+				}
+				// 所有重试都失败，标记限流状态
+				if resp.StatusCode == 429 {
+					s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, quotaScope)
+				}
+				// 最后一次尝试也失败
+				resp = &http.Response{
+					StatusCode: resp.StatusCode,
+					Header:     resp.Header.Clone(),
+					Body:       io.NopCloser(bytes.NewReader(respBody)),
+				}
+				break urlFallbackLoop
+			}
+
+			break urlFallbackLoop
+		}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -551,6 +684,27 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 		// Antigravity /v1internal 链路在部分场景会对 thought/thinking signature 做严格校验，
 		// 当历史消息携带的 signature 不合法时会直接 400；去除 thinking 后可继续完成请求。
 		if resp.StatusCode == http.StatusBadRequest && isSignatureRelatedError(respBody) {
+			upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
+			upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+			logBody := s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBody
+			maxBytes := 2048
+			if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes > 0 {
+				maxBytes = s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+			}
+			upstreamDetail := ""
+			if logBody {
+				upstreamDetail = truncateString(string(respBody), maxBytes)
+			}
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				UpstreamStatusCode: resp.StatusCode,
+				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				Kind:               "signature_error",
+				Message:            upstreamMsg,
+				Detail:             upstreamDetail,
+			})
+
 			// Conservative two-stage fallback:
 			// 1) Disable top-level thinking + thinking->text
 			// 2) Only if still signature-related 400: also downgrade tool_use/tool_result to text.
@@ -584,6 +738,13 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 				}
 				retryResp, retryErr := s.httpUpstream.Do(retryReq, proxyURL, account.ID, account.Concurrency)
 				if retryErr != nil {
+					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+						Platform:           account.Platform,
+						AccountID:          account.ID,
+						UpstreamStatusCode: 0,
+						Kind:               "signature_retry_request_error",
+						Message:            sanitizeUpstreamErrorMessage(retryErr.Error()),
+					})
 					log.Printf("Antigravity account %d: signature retry request failed (%s): %v", account.ID, stage.name, retryErr)
 					continue
 				}
@@ -597,6 +758,25 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 
 				retryBody, _ := io.ReadAll(io.LimitReader(retryResp.Body, 2<<20))
 				_ = retryResp.Body.Close()
+				kind := "signature_retry"
+				if strings.TrimSpace(stage.name) != "" {
+					kind = "signature_retry_" + strings.ReplaceAll(stage.name, "+", "_")
+				}
+				retryUpstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(retryBody))
+				retryUpstreamMsg = sanitizeUpstreamErrorMessage(retryUpstreamMsg)
+				retryUpstreamDetail := ""
+				if logBody {
+					retryUpstreamDetail = truncateString(string(retryBody), maxBytes)
+				}
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					UpstreamStatusCode: retryResp.StatusCode,
+					UpstreamRequestID:  retryResp.Header.Get("x-request-id"),
+					Kind:               kind,
+					Message:            retryUpstreamMsg,
+					Detail:             retryUpstreamDetail,
+				})
 
 				// If this stage fixed the signature issue, we stop; otherwise we may try the next stage.
 				if retryResp.StatusCode != http.StatusBadRequest || !isSignatureRelatedError(retryBody) {
@@ -621,13 +801,33 @@ func (s *AntigravityGatewayService) Forward(ctx context.Context, c *gin.Context,
 
 		// 处理错误响应（重试后仍失败或不触发重试）
 		if resp.StatusCode >= 400 {
-			s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody)
+			s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, quotaScope)
 
 			if s.shouldFailoverUpstreamError(resp.StatusCode) {
+				upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
+				upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+				logBody := s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBody
+				maxBytes := 2048
+				if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes > 0 {
+					maxBytes = s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+				}
+				upstreamDetail := ""
+				if logBody {
+					upstreamDetail = truncateString(string(respBody), maxBytes)
+				}
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "failover",
+					Message:            upstreamMsg,
+					Detail:             upstreamDetail,
+				})
 				return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode}
 			}
 
-			return nil, s.writeMappedClaudeError(c, resp.StatusCode, respBody)
+			return nil, s.writeMappedClaudeError(c, account, resp.StatusCode, resp.Header.Get("x-request-id"), respBody)
 		}
 	}
 
@@ -708,6 +908,143 @@ func extractAntigravityErrorMessage(body []byte) string {
 	}
 
 	return ""
+}
+
+// cleanCacheControlFromGeminiJSON removes cache_control from Gemini JSON (emergency fix)
+// This should not be needed if transformation is correct, but serves as a safety net
+func cleanCacheControlFromGeminiJSON(body []byte) []byte {
+	// Try a more robust approach: parse and clean
+	var data map[string]any
+	if err := json.Unmarshal(body, &data); err != nil {
+		log.Printf("[Antigravity] Failed to parse Gemini JSON for cache_control cleaning: %v", err)
+		return body
+	}
+
+	cleaned := removeCacheControlFromAny(data)
+	if !cleaned {
+		return body
+	}
+
+	if result, err := json.Marshal(data); err == nil {
+		log.Printf("[Antigravity] Successfully cleaned cache_control from Gemini JSON")
+		return result
+	}
+
+	return body
+}
+
+// removeCacheControlFromAny recursively removes cache_control fields
+func removeCacheControlFromAny(v any) bool {
+	cleaned := false
+
+	switch val := v.(type) {
+	case map[string]any:
+		for k, child := range val {
+			if k == "cache_control" {
+				delete(val, k)
+				cleaned = true
+			} else if removeCacheControlFromAny(child) {
+				cleaned = true
+			}
+		}
+	case []any:
+		for _, item := range val {
+			if removeCacheControlFromAny(item) {
+				cleaned = true
+			}
+		}
+	}
+
+	return cleaned
+}
+
+// sanitizeThinkingBlocks cleans cache_control and flattens history thinking blocks
+// Thinking blocks do NOT support cache_control field (Anthropic API/Vertex AI requirement)
+// Additionally, history thinking blocks are flattened to text to avoid upstream validation errors
+func sanitizeThinkingBlocks(req *antigravity.ClaudeRequest) {
+	if req == nil {
+		return
+	}
+
+	log.Printf("[Antigravity] sanitizeThinkingBlocks: processing request with %d messages", len(req.Messages))
+
+	// Clean system blocks
+	if len(req.System) > 0 {
+		var systemBlocks []map[string]any
+		if err := json.Unmarshal(req.System, &systemBlocks); err == nil {
+			for i := range systemBlocks {
+				if blockType, _ := systemBlocks[i]["type"].(string); blockType == "thinking" || systemBlocks[i]["thinking"] != nil {
+					if removeCacheControlFromAny(systemBlocks[i]) {
+						log.Printf("[Antigravity] Deep cleaned cache_control from thinking block in system[%d]", i)
+					}
+				}
+			}
+			// Marshal back
+			if cleaned, err := json.Marshal(systemBlocks); err == nil {
+				req.System = cleaned
+			}
+		}
+	}
+
+	// Clean message content blocks and flatten history
+	lastMsgIdx := len(req.Messages) - 1
+	for msgIdx := range req.Messages {
+		raw := req.Messages[msgIdx].Content
+		if len(raw) == 0 {
+			continue
+		}
+
+		// Try to parse as blocks array
+		var blocks []map[string]any
+		if err := json.Unmarshal(raw, &blocks); err != nil {
+			continue
+		}
+
+		cleaned := false
+		for blockIdx := range blocks {
+			blockType, _ := blocks[blockIdx]["type"].(string)
+
+			// Check for thinking blocks (typed or untyped)
+			if blockType == "thinking" || blocks[blockIdx]["thinking"] != nil {
+				// 1. Clean cache_control
+				if removeCacheControlFromAny(blocks[blockIdx]) {
+					log.Printf("[Antigravity] Deep cleaned cache_control from thinking block in messages[%d].content[%d]", msgIdx, blockIdx)
+					cleaned = true
+				}
+
+				// 2. Flatten to text if it's a history message (not the last one)
+				if msgIdx < lastMsgIdx {
+					log.Printf("[Antigravity] Flattening history thinking block to text at messages[%d].content[%d]", msgIdx, blockIdx)
+
+					// Extract thinking content
+					var textContent string
+					if t, ok := blocks[blockIdx]["thinking"].(string); ok {
+						textContent = t
+					} else {
+						// Fallback for non-string content (marshal it)
+						if b, err := json.Marshal(blocks[blockIdx]["thinking"]); err == nil {
+							textContent = string(b)
+						}
+					}
+
+					// Convert to text block
+					blocks[blockIdx]["type"] = "text"
+					blocks[blockIdx]["text"] = textContent
+					delete(blocks[blockIdx], "thinking")
+					delete(blocks[blockIdx], "signature")
+					delete(blocks[blockIdx], "cache_control") // Ensure it's gone
+					cleaned = true
+				}
+			}
+		}
+
+		// Marshal back if modified
+		if cleaned {
+			if marshaled, err := json.Marshal(blocks); err == nil {
+				req.Messages[msgIdx].Content = marshaled
+			}
+		}
+	}
 }
 
 // stripThinkingFromClaudeRequest converts thinking blocks to text blocks in a Claude Messages request.
@@ -946,6 +1283,7 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	if len(body) == 0 {
 		return nil, s.writeGoogleError(c, http.StatusBadRequest, "Request body is empty")
 	}
+	quotaScope, _ := resolveAntigravityQuotaScope(originalModel)
 
 	// 解析请求以获取 image_size（用于图片计费）
 	imageSize := s.extractImageSize(body)
@@ -1004,61 +1342,134 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 	// 如果客户端请求非流式，在响应处理阶段会收集完整流式响应后返回
 	upstreamAction := "streamGenerateContent"
 
+	// URL fallback 循环
+	availableURLs := antigravity.DefaultURLAvailability.GetAvailableURLs()
+	if len(availableURLs) == 0 {
+		availableURLs = antigravity.BaseURLs // 所有 URL 都不可用时，重试所有
+	}
+
 	// 重试循环
 	var resp *http.Response
-	for attempt := 1; attempt <= antigravityMaxRetries; attempt++ {
-		// 检查 context 是否已取消（客户端断开连接）
-		select {
-		case <-ctx.Done():
-			log.Printf("%s status=context_canceled error=%v", prefix, ctx.Err())
-			return nil, ctx.Err()
-		default:
-		}
+urlFallbackLoop:
+	for urlIdx, baseURL := range availableURLs {
+		for attempt := 1; attempt <= antigravityMaxRetries; attempt++ {
+			// 检查 context 是否已取消（客户端断开连接）
+			select {
+			case <-ctx.Done():
+				log.Printf("%s status=context_canceled error=%v", prefix, ctx.Err())
+				return nil, ctx.Err()
+			default:
+			}
 
-		upstreamReq, err := antigravity.NewAPIRequest(ctx, upstreamAction, accessToken, wrappedBody)
-		if err != nil {
-			return nil, err
-		}
+			upstreamReq, err := antigravity.NewAPIRequestWithURL(ctx, baseURL, upstreamAction, accessToken, wrappedBody)
+			if err != nil {
+				return nil, err
+			}
 
-		resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
-		if err != nil {
-			if attempt < antigravityMaxRetries {
-				log.Printf("%s status=request_failed retry=%d/%d error=%v", prefix, attempt, antigravityMaxRetries, err)
-				if !sleepAntigravityBackoffWithContext(ctx, attempt) {
-					log.Printf("%s status=context_canceled_during_backoff", prefix)
-					return nil, ctx.Err()
+			resp, err = s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
+			if err != nil {
+				safeErr := sanitizeUpstreamErrorMessage(err.Error())
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					UpstreamStatusCode: 0,
+					Kind:               "request_error",
+					Message:            safeErr,
+				})
+				// 检查是否应触发 URL 降级
+				if shouldAntigravityFallbackToNextURL(err, 0) && urlIdx < len(availableURLs)-1 {
+					antigravity.DefaultURLAvailability.MarkUnavailable(baseURL)
+					log.Printf("%s URL fallback (connection error): %s -> %s", prefix, baseURL, availableURLs[urlIdx+1])
+					continue urlFallbackLoop
 				}
-				continue
-			}
-			log.Printf("%s status=request_failed retries_exhausted error=%v", prefix, err)
-			return nil, s.writeGoogleError(c, http.StatusBadGateway, "Upstream request failed after retries")
-		}
-
-		if resp.StatusCode >= 400 && s.shouldRetryUpstreamError(resp.StatusCode) {
-			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
-			_ = resp.Body.Close()
-
-			if attempt < antigravityMaxRetries {
-				log.Printf("%s status=%d retry=%d/%d", prefix, resp.StatusCode, attempt, antigravityMaxRetries)
-				if !sleepAntigravityBackoffWithContext(ctx, attempt) {
-					log.Printf("%s status=context_canceled_during_backoff", prefix)
-					return nil, ctx.Err()
+				if attempt < antigravityMaxRetries {
+					log.Printf("%s status=request_failed retry=%d/%d error=%v", prefix, attempt, antigravityMaxRetries, err)
+					if !sleepAntigravityBackoffWithContext(ctx, attempt) {
+						log.Printf("%s status=context_canceled_during_backoff", prefix)
+						return nil, ctx.Err()
+					}
+					continue
 				}
-				continue
+				log.Printf("%s status=request_failed retries_exhausted error=%v", prefix, err)
+				setOpsUpstreamError(c, 0, safeErr, "")
+				return nil, s.writeGoogleError(c, http.StatusBadGateway, "Upstream request failed after retries")
 			}
-			// 所有重试都失败，标记限流状态
-			if resp.StatusCode == 429 {
-				s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody)
-			}
-			resp = &http.Response{
-				StatusCode: resp.StatusCode,
-				Header:     resp.Header.Clone(),
-				Body:       io.NopCloser(bytes.NewReader(respBody)),
-			}
-			break
-		}
 
-		break
+			// 检查是否应触发 URL 降级（仅 429）
+			if resp.StatusCode == http.StatusTooManyRequests && urlIdx < len(availableURLs)-1 {
+				respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+				_ = resp.Body.Close()
+				upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
+				upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+				logBody := s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBody
+				maxBytes := 2048
+				if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes > 0 {
+					maxBytes = s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+				}
+				upstreamDetail := ""
+				if logBody {
+					upstreamDetail = truncateString(string(respBody), maxBytes)
+				}
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "retry",
+					Message:            upstreamMsg,
+					Detail:             upstreamDetail,
+				})
+				antigravity.DefaultURLAvailability.MarkUnavailable(baseURL)
+				log.Printf("%s URL fallback (HTTP 429): %s -> %s body=%s", prefix, baseURL, availableURLs[urlIdx+1], truncateForLog(respBody, 200))
+				continue urlFallbackLoop
+			}
+
+			if resp.StatusCode >= 400 && s.shouldRetryUpstreamError(resp.StatusCode) {
+				respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+				_ = resp.Body.Close()
+
+				if attempt < antigravityMaxRetries {
+					upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(respBody))
+					upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+					logBody := s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBody
+					maxBytes := 2048
+					if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes > 0 {
+						maxBytes = s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+					}
+					upstreamDetail := ""
+					if logBody {
+						upstreamDetail = truncateString(string(respBody), maxBytes)
+					}
+					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+						Platform:           account.Platform,
+						AccountID:          account.ID,
+						UpstreamStatusCode: resp.StatusCode,
+						UpstreamRequestID:  resp.Header.Get("x-request-id"),
+						Kind:               "retry",
+						Message:            upstreamMsg,
+						Detail:             upstreamDetail,
+					})
+					log.Printf("%s status=%d retry=%d/%d", prefix, resp.StatusCode, attempt, antigravityMaxRetries)
+					if !sleepAntigravityBackoffWithContext(ctx, attempt) {
+						log.Printf("%s status=context_canceled_during_backoff", prefix)
+						return nil, ctx.Err()
+					}
+					continue
+				}
+				// 所有重试都失败，标记限流状态
+				if resp.StatusCode == 429 {
+					s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, quotaScope)
+				}
+				resp = &http.Response{
+					StatusCode: resp.StatusCode,
+					Header:     resp.Header.Clone(),
+					Body:       io.NopCloser(bytes.NewReader(respBody)),
+				}
+				break urlFallbackLoop
+			}
+
+			break urlFallbackLoop
+		}
 	}
 	defer func() {
 		if resp != nil && resp.Body != nil {
@@ -1101,23 +1512,61 @@ func (s *AntigravityGatewayService) ForwardGemini(ctx context.Context, c *gin.Co
 			goto handleSuccess
 		}
 
-		s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody)
+		s.handleUpstreamError(ctx, prefix, account, resp.StatusCode, resp.Header, respBody, quotaScope)
 
-		if s.shouldFailoverUpstreamError(resp.StatusCode) {
-			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode}
-		}
-
-		// 解包并返回错误
 		requestID := resp.Header.Get("x-request-id")
 		if requestID != "" {
 			c.Header("x-request-id", requestID)
 		}
-		unwrapped, _ := s.unwrapV1InternalResponse(respBody)
+
+		unwrapped, unwrapErr := s.unwrapV1InternalResponse(respBody)
+		unwrappedForOps := unwrapped
+		if unwrapErr != nil || len(unwrappedForOps) == 0 {
+			unwrappedForOps = respBody
+		}
+		upstreamMsg := strings.TrimSpace(extractAntigravityErrorMessage(unwrappedForOps))
+		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+
+		logBody := s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBody
+		maxBytes := 2048
+		if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes > 0 {
+			maxBytes = s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+		}
+		upstreamDetail := ""
+		if logBody {
+			upstreamDetail = truncateString(string(unwrappedForOps), maxBytes)
+		}
+
+		// Always record upstream context for Ops error logs, even when we will failover.
+		setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
+
+		if s.shouldFailoverUpstreamError(resp.StatusCode) {
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				UpstreamStatusCode: resp.StatusCode,
+				UpstreamRequestID:  requestID,
+				Kind:               "failover",
+				Message:            upstreamMsg,
+				Detail:             upstreamDetail,
+			})
+			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode}
+		}
+
 		contentType := resp.Header.Get("Content-Type")
 		if contentType == "" {
 			contentType = "application/json"
 		}
-		c.Data(resp.StatusCode, contentType, unwrapped)
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			UpstreamStatusCode: resp.StatusCode,
+			UpstreamRequestID:  requestID,
+			Kind:               "http_error",
+			Message:            upstreamMsg,
+			Detail:             upstreamDetail,
+		})
+		c.Data(resp.StatusCode, contentType, unwrappedForOps)
 		return nil, fmt.Errorf("antigravity upstream error: %d", resp.StatusCode)
 	}
 
@@ -1215,7 +1664,7 @@ func sleepAntigravityBackoffWithContext(ctx context.Context, attempt int) bool {
 	}
 }
 
-func (s *AntigravityGatewayService) handleUpstreamError(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte) {
+func (s *AntigravityGatewayService) handleUpstreamError(ctx context.Context, prefix string, account *Account, statusCode int, headers http.Header, body []byte, quotaScope AntigravityQuotaScope) {
 	// 429 使用 Gemini 格式解析（从 body 解析重置时间）
 	if statusCode == 429 {
 		resetAt := ParseGeminiRateLimitResetTime(body)
@@ -1226,13 +1675,23 @@ func (s *AntigravityGatewayService) handleUpstreamError(ctx context.Context, pre
 				defaultDur = 5 * time.Minute
 			}
 			ra := time.Now().Add(defaultDur)
-			log.Printf("%s status=429 rate_limited reset_in=%v (fallback)", prefix, defaultDur)
-			_ = s.accountRepo.SetRateLimited(ctx, account.ID, ra)
+			log.Printf("%s status=429 rate_limited scope=%s reset_in=%v (fallback)", prefix, quotaScope, defaultDur)
+			if quotaScope == "" {
+				return
+			}
+			if err := s.accountRepo.SetAntigravityQuotaScopeLimit(ctx, account.ID, quotaScope, ra); err != nil {
+				log.Printf("%s status=429 rate_limit_set_failed scope=%s error=%v", prefix, quotaScope, err)
+			}
 			return
 		}
 		resetTime := time.Unix(*resetAt, 0)
-		log.Printf("%s status=429 rate_limited reset_at=%v reset_in=%v", prefix, resetTime.Format("15:04:05"), time.Until(resetTime).Truncate(time.Second))
-		_ = s.accountRepo.SetRateLimited(ctx, account.ID, resetTime)
+		log.Printf("%s status=429 rate_limited scope=%s reset_at=%v reset_in=%v", prefix, quotaScope, resetTime.Format("15:04:05"), time.Until(resetTime).Truncate(time.Second))
+		if quotaScope == "" {
+			return
+		}
+		if err := s.accountRepo.SetAntigravityQuotaScopeLimit(ctx, account.ID, quotaScope, resetTime); err != nil {
+			log.Printf("%s status=429 rate_limit_set_failed scope=%s error=%v", prefix, quotaScope, err)
+		}
 		return
 	}
 	// 其他错误码继续使用 rateLimitService
@@ -1402,6 +1861,7 @@ func (s *AntigravityGatewayService) handleGeminiStreamingResponse(c *gin.Context
 				continue
 			}
 			log.Printf("Stream data interval timeout (antigravity)")
+			// 注意：此函数没有 account 上下文，无法调用 HandleStreamTimeout
 			sendErrorEvent("stream_timeout")
 			return &antigravityStreamResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
 		}
@@ -1562,9 +2022,35 @@ func (s *AntigravityGatewayService) writeClaudeError(c *gin.Context, status int,
 	return fmt.Errorf("%s", message)
 }
 
-func (s *AntigravityGatewayService) writeMappedClaudeError(c *gin.Context, upstreamStatus int, body []byte) error {
-	// 记录上游错误详情便于调试
-	log.Printf("[antigravity-Forward] upstream_error status=%d body=%s", upstreamStatus, string(body))
+func (s *AntigravityGatewayService) writeMappedClaudeError(c *gin.Context, account *Account, upstreamStatus int, upstreamRequestID string, body []byte) error {
+	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
+	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+
+	logBody := s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBody
+	maxBytes := 2048
+	if s.settingService != nil && s.settingService.cfg != nil && s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes > 0 {
+		maxBytes = s.settingService.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+	}
+
+	upstreamDetail := ""
+	if logBody {
+		upstreamDetail = truncateString(string(body), maxBytes)
+	}
+	setOpsUpstreamError(c, upstreamStatus, upstreamMsg, upstreamDetail)
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		Platform:           account.Platform,
+		AccountID:          account.ID,
+		UpstreamStatusCode: upstreamStatus,
+		UpstreamRequestID:  upstreamRequestID,
+		Kind:               "http_error",
+		Message:            upstreamMsg,
+		Detail:             upstreamDetail,
+	})
+
+	// 记录上游错误详情便于排障（可选：由配置控制；不回显到客户端）
+	if logBody {
+		log.Printf("[antigravity-Forward] upstream_error status=%d body=%s", upstreamStatus, truncateForLog(body, maxBytes))
+	}
 
 	var statusCode int
 	var errType, errMsg string
@@ -1600,7 +2086,10 @@ func (s *AntigravityGatewayService) writeMappedClaudeError(c *gin.Context, upstr
 		"type":  "error",
 		"error": gin.H{"type": errType, "message": errMsg},
 	})
-	return fmt.Errorf("upstream error: %d", upstreamStatus)
+	if upstreamMsg == "" {
+		return fmt.Errorf("upstream error: %d", upstreamStatus)
+	}
+	return fmt.Errorf("upstream error: %d message=%s", upstreamStatus, upstreamMsg)
 }
 
 func (s *AntigravityGatewayService) writeGoogleError(c *gin.Context, status int, message string) error {
@@ -1927,6 +2416,7 @@ func (s *AntigravityGatewayService) handleClaudeStreamingResponse(c *gin.Context
 				continue
 			}
 			log.Printf("Stream data interval timeout (antigravity)")
+			// 注意：此函数没有 account 上下文，无法调用 HandleStreamTimeout
 			sendErrorEvent("stream_timeout")
 			return &antigravityStreamResult{usage: convertUsage(nil), firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
 		}

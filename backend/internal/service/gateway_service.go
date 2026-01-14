@@ -33,7 +33,7 @@ const (
 	claudeAPIURL            = "https://api.anthropic.com/v1/messages?beta=true"
 	claudeAPICountTokensURL = "https://api.anthropic.com/v1/messages/count_tokens?beta=true"
 	stickySessionTTL        = time.Hour // 粘性会话TTL
-	defaultMaxLineSize      = 10 * 1024 * 1024
+	defaultMaxLineSize      = 40 * 1024 * 1024
 	claudeCodeSystemPrompt  = "You are Claude Code, Anthropic's official CLI for Claude."
 	maxCacheControlBlocks   = 4 // Anthropic API 允许的最大 cache_control 块数量
 )
@@ -55,6 +55,9 @@ var (
 		"You are a helpful AI assistant tasked with summarizing conversations", // Compact 版
 	}
 )
+
+// ErrClaudeCodeOnly 表示分组仅允许 Claude Code 客户端访问
+var ErrClaudeCodeOnly = errors.New("this group only allows Claude Code clients")
 
 // allowedHeaders 白名单headers（参考CRS项目）
 var allowedHeaders = map[string]bool{
@@ -80,9 +83,17 @@ var allowedHeaders = map[string]bool{
 
 // GatewayCache defines cache operations for gateway service
 type GatewayCache interface {
-	GetSessionAccountID(ctx context.Context, sessionHash string) (int64, error)
-	SetSessionAccountID(ctx context.Context, sessionHash string, accountID int64, ttl time.Duration) error
-	RefreshSessionTTL(ctx context.Context, sessionHash string, ttl time.Duration) error
+	GetSessionAccountID(ctx context.Context, groupID int64, sessionHash string) (int64, error)
+	SetSessionAccountID(ctx context.Context, groupID int64, sessionHash string, accountID int64, ttl time.Duration) error
+	RefreshSessionTTL(ctx context.Context, groupID int64, sessionHash string, ttl time.Duration) error
+}
+
+// derefGroupID safely dereferences *int64 to int64, returning 0 if nil
+func derefGroupID(groupID *int64) int64 {
+	if groupID == nil {
+		return 0
+	}
+	return *groupID
 }
 
 type AccountWaitPlan struct {
@@ -140,6 +151,7 @@ type GatewayService struct {
 	userSubRepo         UserSubscriptionRepository
 	cache               GatewayCache
 	cfg                 *config.Config
+	schedulerSnapshot   *SchedulerSnapshotService
 	billingService      *BillingService
 	rateLimitService    *RateLimitService
 	billingCacheService *BillingCacheService
@@ -158,6 +170,7 @@ func NewGatewayService(
 	userSubRepo UserSubscriptionRepository,
 	cache GatewayCache,
 	cfg *config.Config,
+	schedulerSnapshot *SchedulerSnapshotService,
 	concurrencyService *ConcurrencyService,
 	billingService *BillingService,
 	rateLimitService *RateLimitService,
@@ -174,6 +187,7 @@ func NewGatewayService(
 		userSubRepo:         userSubRepo,
 		cache:               cache,
 		cfg:                 cfg,
+		schedulerSnapshot:   schedulerSnapshot,
 		concurrencyService:  concurrencyService,
 		billingService:      billingService,
 		rateLimitService:    rateLimitService,
@@ -225,11 +239,11 @@ func (s *GatewayService) GenerateSessionHash(parsed *ParsedRequest) string {
 }
 
 // BindStickySession sets session -> account binding with standard TTL.
-func (s *GatewayService) BindStickySession(ctx context.Context, sessionHash string, accountID int64) error {
+func (s *GatewayService) BindStickySession(ctx context.Context, groupID *int64, sessionHash string, accountID int64) error {
 	if sessionHash == "" || accountID <= 0 || s.cache == nil {
 		return nil
 	}
-	return s.cache.SetSessionAccountID(ctx, sessionHash, accountID, stickySessionTTL)
+	return s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, accountID, stickySessionTTL)
 }
 
 func (s *GatewayService) extractCacheableContent(parsed *ParsedRequest) string {
@@ -350,11 +364,12 @@ func (s *GatewayService) SelectAccountForModelWithExclusions(ctx context.Context
 	if hasForcePlatform && forcePlatform != "" {
 		platform = forcePlatform
 	} else if groupID != nil {
-		// 根据分组 platform 决定查询哪种账号
-		group, err := s.groupRepo.GetByID(ctx, *groupID)
+		group, resolvedGroupID, err := s.resolveGatewayGroup(ctx, groupID)
 		if err != nil {
-			return nil, fmt.Errorf("get group failed: %w", err)
+			return nil, err
 		}
+		groupID = resolvedGroupID
+		ctx = s.withGroupContext(ctx, group)
 		platform = group.Platform
 	} else {
 		// 无分组时只使用原生 anthropic 平台
@@ -377,10 +392,18 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	cfg := s.schedulingConfig()
 	var stickyAccountID int64
 	if sessionHash != "" && s.cache != nil {
-		if accountID, err := s.cache.GetSessionAccountID(ctx, sessionHash); err == nil {
+		if accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), sessionHash); err == nil {
 			stickyAccountID = accountID
 		}
 	}
+
+	// 检查 Claude Code 客户端限制（可能会替换 groupID 为降级分组）
+	group, groupID, err := s.checkClaudeCodeRestriction(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	ctx = s.withGroupContext(ctx, group)
+
 	if s.concurrencyService == nil || !cfg.LoadBatchEnabled {
 		account, err := s.SelectAccountForModelWithExclusions(ctx, groupID, sessionHash, requestedModel, excludedIDs)
 		if err != nil {
@@ -419,7 +442,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		}, nil
 	}
 
-	platform, hasForcePlatform, err := s.resolvePlatform(ctx, groupID)
+	platform, hasForcePlatform, err := s.resolvePlatform(ctx, groupID, group)
 	if err != nil {
 		return nil, err
 	}
@@ -443,16 +466,21 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 	// ============ Layer 1: 粘性会话优先 ============
 	if sessionHash != "" && s.cache != nil {
-		accountID, err := s.cache.GetSessionAccountID(ctx, sessionHash)
+		accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 		if err == nil && accountID > 0 && !isExcluded(accountID) {
-			account, err := s.accountRepo.GetByID(ctx, accountID)
-			if err == nil && s.isAccountInGroup(account, groupID) &&
+			// 粘性命中仅在当前可调度候选集中生效。
+			accountByID := make(map[int64]*Account, len(accounts))
+			for i := range accounts {
+				accountByID[accounts[i].ID] = &accounts[i]
+			}
+			account, ok := accountByID[accountID]
+			if ok && s.isAccountInGroup(account, groupID) &&
 				s.isAccountAllowedForPlatform(account, platform, useMixed) &&
-				account.IsSchedulable() &&
+				account.IsSchedulableForModel(requestedModel) &&
 				(requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) {
 				result, err := s.tryAcquireAccountSlot(ctx, accountID, account.Concurrency)
 				if err == nil && result.Acquired {
-					_ = s.cache.RefreshSessionTTL(ctx, sessionHash, stickySessionTTL)
+					_ = s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL)
 					return &AccountSelectionResult{
 						Account:     account,
 						Acquired:    true,
@@ -483,7 +511,16 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 		if isExcluded(acc.ID) {
 			continue
 		}
+		// Scheduler snapshots can be temporarily stale (bucket rebuild is throttled);
+		// re-check schedulability here so recently rate-limited/overloaded accounts
+		// are not selected again before the bucket is rebuilt.
+		if !acc.IsSchedulable() {
+			continue
+		}
 		if !s.isAccountAllowedForPlatform(acc, platform, useMixed) {
+			continue
+		}
+		if !acc.IsSchedulableForModel(requestedModel) {
 			continue
 		}
 		if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
@@ -506,7 +543,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 
 	loadMap, err := s.concurrencyService.GetAccountsLoadBatch(ctx, accountLoads)
 	if err != nil {
-		if result, ok := s.tryAcquireByLegacyOrder(ctx, candidates, sessionHash, preferOAuth); ok {
+		if result, ok := s.tryAcquireByLegacyOrder(ctx, candidates, groupID, sessionHash, preferOAuth); ok {
 			return result, nil
 		}
 	} else {
@@ -556,7 +593,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 				result, err := s.tryAcquireAccountSlot(ctx, item.account.ID, item.account.Concurrency)
 				if err == nil && result.Acquired {
 					if sessionHash != "" && s.cache != nil {
-						_ = s.cache.SetSessionAccountID(ctx, sessionHash, item.account.ID, stickySessionTTL)
+						_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, item.account.ID, stickySessionTTL)
 					}
 					return &AccountSelectionResult{
 						Account:     item.account,
@@ -584,7 +621,7 @@ func (s *GatewayService) SelectAccountWithLoadAwareness(ctx context.Context, gro
 	return nil, errors.New("no available accounts")
 }
 
-func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates []*Account, sessionHash string, preferOAuth bool) (*AccountSelectionResult, bool) {
+func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates []*Account, groupID *int64, sessionHash string, preferOAuth bool) (*AccountSelectionResult, bool) {
 	ordered := append([]*Account(nil), candidates...)
 	sortAccountsByPriorityAndLastUsed(ordered, preferOAuth)
 
@@ -592,7 +629,7 @@ func (s *GatewayService) tryAcquireByLegacyOrder(ctx context.Context, candidates
 		result, err := s.tryAcquireAccountSlot(ctx, acc.ID, acc.Concurrency)
 		if err == nil && result.Acquired {
 			if sessionHash != "" && s.cache != nil {
-				_ = s.cache.SetSessionAccountID(ctx, sessionHash, acc.ID, stickySessionTTL)
+				_ = s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, acc.ID, stickySessionTTL)
 			}
 			return &AccountSelectionResult{
 				Account:     acc,
@@ -619,15 +656,97 @@ func (s *GatewayService) schedulingConfig() config.GatewaySchedulingConfig {
 	}
 }
 
-func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64) (string, bool, error) {
+func (s *GatewayService) withGroupContext(ctx context.Context, group *Group) context.Context {
+	if !IsGroupContextValid(group) {
+		return ctx
+	}
+	if existing, ok := ctx.Value(ctxkey.Group).(*Group); ok && existing != nil && existing.ID == group.ID && IsGroupContextValid(existing) {
+		return ctx
+	}
+	return context.WithValue(ctx, ctxkey.Group, group)
+}
+
+func (s *GatewayService) groupFromContext(ctx context.Context, groupID int64) *Group {
+	if group, ok := ctx.Value(ctxkey.Group).(*Group); ok && IsGroupContextValid(group) && group.ID == groupID {
+		return group
+	}
+	return nil
+}
+
+func (s *GatewayService) resolveGroupByID(ctx context.Context, groupID int64) (*Group, error) {
+	if group := s.groupFromContext(ctx, groupID); group != nil {
+		return group, nil
+	}
+	group, err := s.groupRepo.GetByIDLite(ctx, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("get group failed: %w", err)
+	}
+	return group, nil
+}
+
+func (s *GatewayService) resolveGatewayGroup(ctx context.Context, groupID *int64) (*Group, *int64, error) {
+	if groupID == nil {
+		return nil, nil, nil
+	}
+
+	currentID := *groupID
+	visited := map[int64]struct{}{}
+	for {
+		if _, seen := visited[currentID]; seen {
+			return nil, nil, fmt.Errorf("fallback group cycle detected")
+		}
+		visited[currentID] = struct{}{}
+
+		group, err := s.resolveGroupByID(ctx, currentID)
+		if err != nil {
+			return nil, nil, err
+		}
+
+		if !group.ClaudeCodeOnly || IsClaudeCodeClient(ctx) {
+			return group, &currentID, nil
+		}
+
+		if group.FallbackGroupID == nil {
+			return nil, nil, ErrClaudeCodeOnly
+		}
+		currentID = *group.FallbackGroupID
+	}
+}
+
+// checkClaudeCodeRestriction 检查分组的 Claude Code 客户端限制
+// 如果分组启用了 claude_code_only 且请求不是来自 Claude Code 客户端：
+//   - 有降级分组：返回降级分组的 ID
+//   - 无降级分组：返回 ErrClaudeCodeOnly 错误
+func (s *GatewayService) checkClaudeCodeRestriction(ctx context.Context, groupID *int64) (*Group, *int64, error) {
+	if groupID == nil {
+		return nil, groupID, nil
+	}
+
+	// 强制平台模式不检查 Claude Code 限制
+	if _, hasForcePlatform := ctx.Value(ctxkey.ForcePlatform).(string); hasForcePlatform {
+		return nil, groupID, nil
+	}
+
+	group, resolvedID, err := s.resolveGatewayGroup(ctx, groupID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return group, resolvedID, nil
+}
+
+func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64, group *Group) (string, bool, error) {
 	forcePlatform, hasForcePlatform := ctx.Value(ctxkey.ForcePlatform).(string)
 	if hasForcePlatform && forcePlatform != "" {
 		return forcePlatform, true, nil
 	}
+	if group != nil {
+		return group.Platform, false, nil
+	}
 	if groupID != nil {
-		group, err := s.groupRepo.GetByID(ctx, *groupID)
+		group, err := s.resolveGroupByID(ctx, *groupID)
 		if err != nil {
-			return "", false, fmt.Errorf("get group failed: %w", err)
+			return "", false, err
 		}
 		return group.Platform, false, nil
 	}
@@ -635,6 +754,9 @@ func (s *GatewayService) resolvePlatform(ctx context.Context, groupID *int64) (s
 }
 
 func (s *GatewayService) listSchedulableAccounts(ctx context.Context, groupID *int64, platform string, hasForcePlatform bool) ([]Account, bool, error) {
+	if s.schedulerSnapshot != nil {
+		return s.schedulerSnapshot.ListSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
+	}
 	useMixed := (platform == PlatformAnthropic || platform == PlatformGemini) && !hasForcePlatform
 	if useMixed {
 		platforms := []string{platform, PlatformAntigravity}
@@ -711,6 +833,13 @@ func (s *GatewayService) tryAcquireAccountSlot(ctx context.Context, accountID in
 	return s.concurrencyService.AcquireAccountSlot(ctx, accountID, maxConcurrency)
 }
 
+func (s *GatewayService) getSchedulableAccount(ctx context.Context, accountID int64) (*Account, error) {
+	if s.schedulerSnapshot != nil {
+		return s.schedulerSnapshot.GetAccount(ctx, accountID)
+	}
+	return s.accountRepo.GetByID(ctx, accountID)
+}
+
 func sortAccountsByPriorityAndLastUsed(accounts []*Account, preferOAuth bool) {
 	sort.SliceStable(accounts, func(i, j int) bool {
 		a, b := accounts[i], accounts[j]
@@ -738,13 +867,13 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 	preferOAuth := platform == PlatformGemini
 	// 1. 查询粘性会话
 	if sessionHash != "" && s.cache != nil {
-		accountID, err := s.cache.GetSessionAccountID(ctx, sessionHash)
+		accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 		if err == nil && accountID > 0 {
 			if _, excluded := excludedIDs[accountID]; !excluded {
-				account, err := s.accountRepo.GetByID(ctx, accountID)
+				account, err := s.getSchedulableAccount(ctx, accountID)
 				// 检查账号分组归属和平台匹配（确保粘性会话不会跨分组或跨平台）
-				if err == nil && s.isAccountInGroup(account, groupID) && account.Platform == platform && account.IsSchedulable() && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) {
-					if err := s.cache.RefreshSessionTTL(ctx, sessionHash, stickySessionTTL); err != nil {
+				if err == nil && s.isAccountInGroup(account, groupID) && account.Platform == platform && account.IsSchedulableForModel(requestedModel) && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) {
+					if err := s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL); err != nil {
 						log.Printf("refresh session ttl failed: session=%s err=%v", sessionHash, err)
 					}
 					return account, nil
@@ -754,16 +883,11 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 	}
 
 	// 2. 获取可调度账号列表（单平台）
-	var accounts []Account
-	var err error
-	if s.cfg.RunMode == config.RunModeSimple {
-		// 简易模式：忽略 groupID，查询所有可用账号
-		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, platform)
-	} else if groupID != nil {
-		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatform(ctx, *groupID, platform)
-	} else {
-		accounts, err = s.accountRepo.ListSchedulableByPlatform(ctx, platform)
+	forcePlatform, hasForcePlatform := ctx.Value(ctxkey.ForcePlatform).(string)
+	if hasForcePlatform && forcePlatform == "" {
+		hasForcePlatform = false
 	}
+	accounts, _, err := s.listSchedulableAccounts(ctx, groupID, platform, hasForcePlatform)
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
@@ -773,6 +897,14 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 	for i := range accounts {
 		acc := &accounts[i]
 		if _, excluded := excludedIDs[acc.ID]; excluded {
+			continue
+		}
+		// Scheduler snapshots can be temporarily stale; re-check schedulability here to
+		// avoid selecting accounts that were recently rate-limited/overloaded.
+		if !acc.IsSchedulable() {
+			continue
+		}
+		if !acc.IsSchedulableForModel(requestedModel) {
 			continue
 		}
 		if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
@@ -811,7 +943,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 
 	// 4. 建立粘性绑定
 	if sessionHash != "" && s.cache != nil {
-		if err := s.cache.SetSessionAccountID(ctx, sessionHash, selected.ID, stickySessionTTL); err != nil {
+		if err := s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.ID, stickySessionTTL); err != nil {
 			log.Printf("set session account failed: session=%s account_id=%d err=%v", sessionHash, selected.ID, err)
 		}
 	}
@@ -822,19 +954,18 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 // selectAccountWithMixedScheduling 选择账户（支持混合调度）
 // 查询原生平台账户 + 启用 mixed_scheduling 的 antigravity 账户
 func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, groupID *int64, sessionHash string, requestedModel string, excludedIDs map[int64]struct{}, nativePlatform string) (*Account, error) {
-	platforms := []string{nativePlatform, PlatformAntigravity}
 	preferOAuth := nativePlatform == PlatformGemini
 
 	// 1. 查询粘性会话
 	if sessionHash != "" && s.cache != nil {
-		accountID, err := s.cache.GetSessionAccountID(ctx, sessionHash)
+		accountID, err := s.cache.GetSessionAccountID(ctx, derefGroupID(groupID), sessionHash)
 		if err == nil && accountID > 0 {
 			if _, excluded := excludedIDs[accountID]; !excluded {
-				account, err := s.accountRepo.GetByID(ctx, accountID)
+				account, err := s.getSchedulableAccount(ctx, accountID)
 				// 检查账号分组归属和有效性：原生平台直接匹配，antigravity 需要启用混合调度
-				if err == nil && s.isAccountInGroup(account, groupID) && account.IsSchedulable() && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) {
+				if err == nil && s.isAccountInGroup(account, groupID) && account.IsSchedulableForModel(requestedModel) && (requestedModel == "" || s.isModelSupportedByAccount(account, requestedModel)) {
 					if account.Platform == nativePlatform || (account.Platform == PlatformAntigravity && account.IsMixedSchedulingEnabled()) {
-						if err := s.cache.RefreshSessionTTL(ctx, sessionHash, stickySessionTTL); err != nil {
+						if err := s.cache.RefreshSessionTTL(ctx, derefGroupID(groupID), sessionHash, stickySessionTTL); err != nil {
 							log.Printf("refresh session ttl failed: session=%s err=%v", sessionHash, err)
 						}
 						return account, nil
@@ -845,13 +976,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 	}
 
 	// 2. 获取可调度账号列表
-	var accounts []Account
-	var err error
-	if groupID != nil {
-		accounts, err = s.accountRepo.ListSchedulableByGroupIDAndPlatforms(ctx, *groupID, platforms)
-	} else {
-		accounts, err = s.accountRepo.ListSchedulableByPlatforms(ctx, platforms)
-	}
+	accounts, _, err := s.listSchedulableAccounts(ctx, groupID, nativePlatform, false)
 	if err != nil {
 		return nil, fmt.Errorf("query accounts failed: %w", err)
 	}
@@ -863,8 +988,16 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 		if _, excluded := excludedIDs[acc.ID]; excluded {
 			continue
 		}
+		// Scheduler snapshots can be temporarily stale; re-check schedulability here to
+		// avoid selecting accounts that were recently rate-limited/overloaded.
+		if !acc.IsSchedulable() {
+			continue
+		}
 		// 过滤：原生平台直接通过，antigravity 需要启用混合调度
 		if acc.Platform == PlatformAntigravity && !acc.IsMixedSchedulingEnabled() {
+			continue
+		}
+		if !acc.IsSchedulableForModel(requestedModel) {
 			continue
 		}
 		if requestedModel != "" && !s.isModelSupportedByAccount(acc, requestedModel) {
@@ -903,7 +1036,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 
 	// 4. 建立粘性绑定
 	if sessionHash != "" && s.cache != nil {
-		if err := s.cache.SetSessionAccountID(ctx, sessionHash, selected.ID, stickySessionTTL); err != nil {
+		if err := s.cache.SetSessionAccountID(ctx, derefGroupID(groupID), sessionHash, selected.ID, stickySessionTTL); err != nil {
 			log.Printf("set session account failed: session=%s account_id=%d err=%v", sessionHash, selected.ID, err)
 		}
 	}
@@ -1110,6 +1243,9 @@ func enforceCacheControlLimit(body []byte) []byte {
 		return body
 	}
 
+	// 清理 thinking 块中的非法 cache_control（thinking 块不支持该字段）
+	removeCacheControlFromThinkingBlocks(data)
+
 	// 计算当前 cache_control 块数量
 	count := countCacheControlBlocks(data)
 	if count <= maxCacheControlBlocks {
@@ -1137,6 +1273,7 @@ func enforceCacheControlLimit(body []byte) []byte {
 }
 
 // countCacheControlBlocks 统计 system 和 messages 中的 cache_control 块数量
+// 注意：thinking 块不支持 cache_control，统计时跳过
 func countCacheControlBlocks(data map[string]any) int {
 	count := 0
 
@@ -1144,6 +1281,10 @@ func countCacheControlBlocks(data map[string]any) int {
 	if system, ok := data["system"].([]any); ok {
 		for _, item := range system {
 			if m, ok := item.(map[string]any); ok {
+				// thinking 块不支持 cache_control，跳过
+				if blockType, _ := m["type"].(string); blockType == "thinking" {
+					continue
+				}
 				if _, has := m["cache_control"]; has {
 					count++
 				}
@@ -1158,6 +1299,10 @@ func countCacheControlBlocks(data map[string]any) int {
 				if content, ok := msgMap["content"].([]any); ok {
 					for _, item := range content {
 						if m, ok := item.(map[string]any); ok {
+							// thinking 块不支持 cache_control，跳过
+							if blockType, _ := m["type"].(string); blockType == "thinking" {
+								continue
+							}
 							if _, has := m["cache_control"]; has {
 								count++
 							}
@@ -1173,6 +1318,7 @@ func countCacheControlBlocks(data map[string]any) int {
 
 // removeCacheControlFromMessages 从 messages 中移除一个 cache_control（从头开始）
 // 返回 true 表示成功移除，false 表示没有可移除的
+// 注意：跳过 thinking 块（它不支持 cache_control）
 func removeCacheControlFromMessages(data map[string]any) bool {
 	messages, ok := data["messages"].([]any)
 	if !ok {
@@ -1190,6 +1336,10 @@ func removeCacheControlFromMessages(data map[string]any) bool {
 		}
 		for _, item := range content {
 			if m, ok := item.(map[string]any); ok {
+				// thinking 块不支持 cache_control，跳过
+				if blockType, _ := m["type"].(string); blockType == "thinking" {
+					continue
+				}
 				if _, has := m["cache_control"]; has {
 					delete(m, "cache_control")
 					return true
@@ -1202,6 +1352,7 @@ func removeCacheControlFromMessages(data map[string]any) bool {
 
 // removeCacheControlFromSystem 从 system 中移除一个 cache_control（从尾部开始，保护注入的 prompt）
 // 返回 true 表示成功移除，false 表示没有可移除的
+// 注意：跳过 thinking 块（它不支持 cache_control）
 func removeCacheControlFromSystem(data map[string]any) bool {
 	system, ok := data["system"].([]any)
 	if !ok {
@@ -1211,6 +1362,10 @@ func removeCacheControlFromSystem(data map[string]any) bool {
 	// 从尾部开始移除，保护开头注入的 Claude Code prompt
 	for i := len(system) - 1; i >= 0; i-- {
 		if m, ok := system[i].(map[string]any); ok {
+			// thinking 块不支持 cache_control，跳过
+			if blockType, _ := m["type"].(string); blockType == "thinking" {
+				continue
+			}
 			if _, has := m["cache_control"]; has {
 				delete(m, "cache_control")
 				return true
@@ -1218,6 +1373,44 @@ func removeCacheControlFromSystem(data map[string]any) bool {
 		}
 	}
 	return false
+}
+
+// removeCacheControlFromThinkingBlocks 强制清理所有 thinking 块中的非法 cache_control
+// thinking 块不支持 cache_control 字段，这个函数确保所有 thinking 块都不含该字段
+func removeCacheControlFromThinkingBlocks(data map[string]any) {
+	// 清理 system 中的 thinking 块
+	if system, ok := data["system"].([]any); ok {
+		for _, item := range system {
+			if m, ok := item.(map[string]any); ok {
+				if blockType, _ := m["type"].(string); blockType == "thinking" {
+					if _, has := m["cache_control"]; has {
+						delete(m, "cache_control")
+						log.Printf("[Warning] Removed illegal cache_control from thinking block in system")
+					}
+				}
+			}
+		}
+	}
+
+	// 清理 messages 中的 thinking 块
+	if messages, ok := data["messages"].([]any); ok {
+		for msgIdx, msg := range messages {
+			if msgMap, ok := msg.(map[string]any); ok {
+				if content, ok := msgMap["content"].([]any); ok {
+					for contentIdx, item := range content {
+						if m, ok := item.(map[string]any); ok {
+							if blockType, _ := m["type"].(string); blockType == "thinking" {
+								if _, has := m["cache_control"]; has {
+									delete(m, "cache_control")
+									log.Printf("[Warning] Removed illegal cache_control from thinking block in messages[%d].content[%d]", msgIdx, contentIdx)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 }
 
 // Forward 转发请求到Claude API
@@ -1283,7 +1476,24 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			if resp != nil && resp.Body != nil {
 				_ = resp.Body.Close()
 			}
-			return nil, fmt.Errorf("upstream request failed: %w", err)
+			// Ensure the client receives an error response (handlers assume Forward writes on non-failover errors).
+			safeErr := sanitizeUpstreamErrorMessage(err.Error())
+			setOpsUpstreamError(c, 0, safeErr, "")
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				UpstreamStatusCode: 0,
+				Kind:               "request_error",
+				Message:            safeErr,
+			})
+			c.JSON(http.StatusBadGateway, gin.H{
+				"type": "error",
+				"error": gin.H{
+					"type":    "upstream_error",
+					"message": "Upstream request failed",
+				},
+			})
+			return nil, fmt.Errorf("upstream request failed: %s", safeErr)
 		}
 
 		// 优先检测thinking block签名错误（400）并重试一次
@@ -1293,6 +1503,21 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 				_ = resp.Body.Close()
 
 				if s.isThinkingBlockSignatureError(respBody) {
+					appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+						Platform:           account.Platform,
+						AccountID:          account.ID,
+						UpstreamStatusCode: resp.StatusCode,
+						UpstreamRequestID:  resp.Header.Get("x-request-id"),
+						Kind:               "signature_error",
+						Message:            extractUpstreamErrorMessage(respBody),
+						Detail: func() string {
+							if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+								return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
+							}
+							return ""
+						}(),
+					})
+
 					looksLikeToolSignatureError := func(msg string) bool {
 						m := strings.ToLower(msg)
 						return strings.Contains(m, "tool_use") ||
@@ -1329,6 +1554,20 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 							retryRespBody, retryReadErr := io.ReadAll(io.LimitReader(retryResp.Body, 2<<20))
 							_ = retryResp.Body.Close()
 							if retryReadErr == nil && retryResp.StatusCode == 400 && s.isThinkingBlockSignatureError(retryRespBody) {
+								appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+									Platform:           account.Platform,
+									AccountID:          account.ID,
+									UpstreamStatusCode: retryResp.StatusCode,
+									UpstreamRequestID:  retryResp.Header.Get("x-request-id"),
+									Kind:               "signature_retry_thinking",
+									Message:            extractUpstreamErrorMessage(retryRespBody),
+									Detail: func() string {
+										if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+											return truncateString(string(retryRespBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
+										}
+										return ""
+									}(),
+								})
 								msg2 := extractUpstreamErrorMessage(retryRespBody)
 								if looksLikeToolSignatureError(msg2) && time.Since(retryStart) < maxRetryElapsed {
 									log.Printf("Account %d: signature retry still failing and looks tool-related, retrying with tool blocks downgraded", account.ID)
@@ -1343,6 +1582,13 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 										if retryResp2 != nil && retryResp2.Body != nil {
 											_ = retryResp2.Body.Close()
 										}
+										appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+											Platform:           account.Platform,
+											AccountID:          account.ID,
+											UpstreamStatusCode: 0,
+											Kind:               "signature_retry_tools_request_error",
+											Message:            sanitizeUpstreamErrorMessage(retryErr2.Error()),
+										})
 										log.Printf("Account %d: tool-downgrade signature retry failed: %v", account.ID, retryErr2)
 									} else {
 										log.Printf("Account %d: tool-downgrade signature retry build failed: %v", account.ID, buildErr2)
@@ -1392,9 +1638,24 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 					break
 				}
 
+				respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+				_ = resp.Body.Close()
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "retry",
+					Message:            extractUpstreamErrorMessage(respBody),
+					Detail: func() string {
+						if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+							return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
+						}
+						return ""
+					}(),
+				})
 				log.Printf("Account %d: upstream error %d, retry %d/%d after %v (elapsed=%v/%v)",
 					account.ID, resp.StatusCode, attempt, maxRetryAttempts, delay, elapsed, maxRetryElapsed)
-				_ = resp.Body.Close()
 				if err := sleepWithContext(ctx, delay); err != nil {
 					return nil, err
 				}
@@ -1422,7 +1683,25 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 	// 处理重试耗尽的情况
 	if resp.StatusCode >= 400 && s.shouldRetryUpstreamError(account, resp.StatusCode) {
 		if s.shouldFailoverUpstreamError(resp.StatusCode) {
+			respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+			_ = resp.Body.Close()
+			resp.Body = io.NopCloser(bytes.NewReader(respBody))
+
 			s.handleRetryExhaustedSideEffects(ctx, resp, account)
+			appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+				Platform:           account.Platform,
+				AccountID:          account.ID,
+				UpstreamStatusCode: resp.StatusCode,
+				UpstreamRequestID:  resp.Header.Get("x-request-id"),
+				Kind:               "retry_exhausted_failover",
+				Message:            extractUpstreamErrorMessage(respBody),
+				Detail: func() string {
+					if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+						return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
+					}
+					return ""
+				}(),
+			})
 			return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode}
 		}
 		return s.handleRetryExhaustedError(ctx, resp, c, account)
@@ -1430,7 +1709,25 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 
 	// 处理可切换账号的错误
 	if resp.StatusCode >= 400 && s.shouldFailoverUpstreamError(resp.StatusCode) {
+		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+		_ = resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewReader(respBody))
+
 		s.handleFailoverSideEffects(ctx, resp, account)
+		appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+			Platform:           account.Platform,
+			AccountID:          account.ID,
+			UpstreamStatusCode: resp.StatusCode,
+			UpstreamRequestID:  resp.Header.Get("x-request-id"),
+			Kind:               "failover",
+			Message:            extractUpstreamErrorMessage(respBody),
+			Detail: func() string {
+				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+					return truncateString(string(respBody), s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes)
+				}
+				return ""
+			}(),
+		})
 		return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode}
 	}
 
@@ -1447,6 +1744,26 @@ func (s *GatewayService) Forward(ctx context.Context, c *gin.Context, account *A
 			resp.Body = io.NopCloser(bytes.NewReader(respBody))
 
 			if s.shouldFailoverOn400(respBody) {
+				upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
+				upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+				upstreamDetail := ""
+				if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+					maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+					if maxBytes <= 0 {
+						maxBytes = 2048
+					}
+					upstreamDetail = truncateString(string(respBody), maxBytes)
+				}
+				appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+					Platform:           account.Platform,
+					AccountID:          account.ID,
+					UpstreamStatusCode: resp.StatusCode,
+					UpstreamRequestID:  resp.Header.Get("x-request-id"),
+					Kind:               "failover_on_400",
+					Message:            upstreamMsg,
+					Detail:             upstreamDetail,
+				})
+
 				if s.cfg.Gateway.LogUpstreamErrorBody {
 					log.Printf(
 						"Account %d: 400 error, attempting failover: %s",
@@ -1743,7 +2060,30 @@ func extractUpstreamErrorMessage(body []byte) string {
 }
 
 func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Response, c *gin.Context, account *Account) (*ForwardResult, error) {
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+
+	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(body))
+	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+
+	// Enrich Ops error logs with upstream status + message, and optionally a truncated body snippet.
+	upstreamDetail := ""
+	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+		maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+		if maxBytes <= 0 {
+			maxBytes = 2048
+		}
+		upstreamDetail = truncateString(string(body), maxBytes)
+	}
+	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		Platform:           account.Platform,
+		AccountID:          account.ID,
+		UpstreamStatusCode: resp.StatusCode,
+		UpstreamRequestID:  resp.Header.Get("x-request-id"),
+		Kind:               "http_error",
+		Message:            upstreamMsg,
+		Detail:             upstreamDetail,
+	})
 
 	// 处理上游错误，标记账号状态
 	shouldDisable := false
@@ -1754,24 +2094,33 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 		return nil, &UpstreamFailoverError{StatusCode: resp.StatusCode}
 	}
 
+	// 记录上游错误响应体摘要便于排障（可选：由配置控制；不回显到客户端）
+	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+		log.Printf(
+			"Upstream error %d (account=%d platform=%s type=%s): %s",
+			resp.StatusCode,
+			account.ID,
+			account.Platform,
+			account.Type,
+			truncateForLog(body, s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes),
+		)
+	}
+
 	// 根据状态码返回适当的自定义错误响应（不透传上游详细信息）
 	var errType, errMsg string
 	var statusCode int
 
 	switch resp.StatusCode {
 	case 400:
-		// 仅记录上游错误摘要（避免输出请求内容）；需要时可通过配置打开
-		if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
-			log.Printf(
-				"Upstream 400 error (account=%d platform=%s type=%s): %s",
-				account.ID,
-				account.Platform,
-				account.Type,
-				truncateForLog(body, s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes),
-			)
-		}
 		c.Data(http.StatusBadRequest, "application/json", body)
-		return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
+		summary := upstreamMsg
+		if summary == "" {
+			summary = truncateForLog(body, 512)
+		}
+		if summary == "" {
+			return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
+		}
+		return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, summary)
 	case 401:
 		statusCode = http.StatusBadGateway
 		errType = "upstream_error"
@@ -1807,11 +2156,14 @@ func (s *GatewayService) handleErrorResponse(ctx context.Context, resp *http.Res
 		},
 	})
 
-	return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
+	if upstreamMsg == "" {
+		return nil, fmt.Errorf("upstream error: %d", resp.StatusCode)
+	}
+	return nil, fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
 }
 
 func (s *GatewayService) handleRetryExhaustedSideEffects(ctx context.Context, resp *http.Response, account *Account) {
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	statusCode := resp.StatusCode
 
 	// OAuth/Setup Token 账号的 403：标记账号异常
@@ -1825,7 +2177,7 @@ func (s *GatewayService) handleRetryExhaustedSideEffects(ctx context.Context, re
 }
 
 func (s *GatewayService) handleFailoverSideEffects(ctx context.Context, resp *http.Response, account *Account) {
-	body, _ := io.ReadAll(resp.Body)
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, body)
 }
 
@@ -1833,7 +2185,44 @@ func (s *GatewayService) handleFailoverSideEffects(ctx context.Context, resp *ht
 // OAuth 403：标记账号异常
 // API Key 未配置错误码：仅返回错误，不标记账号
 func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *http.Response, c *gin.Context, account *Account) (*ForwardResult, error) {
+	// Capture upstream error body before side-effects consume the stream.
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	_ = resp.Body.Close()
+	resp.Body = io.NopCloser(bytes.NewReader(respBody))
+
 	s.handleRetryExhaustedSideEffects(ctx, resp, account)
+
+	upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
+	upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+	upstreamDetail := ""
+	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+		maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+		if maxBytes <= 0 {
+			maxBytes = 2048
+		}
+		upstreamDetail = truncateString(string(respBody), maxBytes)
+	}
+	setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
+	appendOpsUpstreamError(c, OpsUpstreamErrorEvent{
+		Platform:           account.Platform,
+		AccountID:          account.ID,
+		UpstreamStatusCode: resp.StatusCode,
+		UpstreamRequestID:  resp.Header.Get("x-request-id"),
+		Kind:               "retry_exhausted",
+		Message:            upstreamMsg,
+		Detail:             upstreamDetail,
+	})
+
+	if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+		log.Printf(
+			"Upstream error %d retries_exhausted (account=%d platform=%s type=%s): %s",
+			resp.StatusCode,
+			account.ID,
+			account.Platform,
+			account.Type,
+			truncateForLog(respBody, s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes),
+		)
+	}
 
 	// 返回统一的重试耗尽错误响应
 	c.JSON(http.StatusBadGateway, gin.H{
@@ -1844,7 +2233,10 @@ func (s *GatewayService) handleRetryExhaustedError(ctx context.Context, resp *ht
 		},
 	})
 
-	return nil, fmt.Errorf("upstream error: %d (retries exhausted)", resp.StatusCode)
+	if upstreamMsg == "" {
+		return nil, fmt.Errorf("upstream error: %d (retries exhausted)", resp.StatusCode)
+	}
+	return nil, fmt.Errorf("upstream error: %d (retries exhausted) message=%s", resp.StatusCode, upstreamMsg)
 }
 
 // streamingResult 流式响应结果
@@ -2025,6 +2417,10 @@ func (s *GatewayService) handleStreamingResponse(ctx context.Context, resp *http
 				return &streamingResult{usage: usage, firstTokenMs: firstTokenMs, clientDisconnect: true}, nil
 			}
 			log.Printf("Stream data interval timeout: account=%d model=%s interval=%s", account.ID, originalModel, streamInterval)
+			// 处理流超时，可能标记账户为临时不可调度或错误状态
+			if s.rateLimitService != nil {
+				s.rateLimitService.HandleStreamTimeout(ctx, account, originalModel)
+			}
 			sendErrorEvent("stream_timeout")
 			return &streamingResult{usage: usage, firstTokenMs: firstTokenMs}, fmt.Errorf("stream data interval timeout")
 		}
@@ -2178,6 +2574,7 @@ type RecordUsageInput struct {
 	Account      *Account
 	Subscription *UserSubscription // 可选：订阅信息
 	UserAgent    string            // 请求的 User-Agent
+	IPAddress    string            // 请求的客户端 IP 地址
 }
 
 // RecordUsage 记录使用量并扣费（或更新订阅用量）
@@ -2266,6 +2663,11 @@ func (s *GatewayService) RecordUsage(ctx context.Context, input *RecordUsageInpu
 	// 添加 UserAgent
 	if input.UserAgent != "" {
 		usageLog.UserAgent = &input.UserAgent
+	}
+
+	// 添加 IPAddress
+	if input.IPAddress != "" {
+		usageLog.IPAddress = &input.IPAddress
 	}
 
 	// 添加分组和订阅关联
@@ -2368,6 +2770,7 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 	// 发送请求
 	resp, err := s.httpUpstream.Do(upstreamReq, proxyURL, account.ID, account.Concurrency)
 	if err != nil {
+		setOpsUpstreamError(c, 0, sanitizeUpstreamErrorMessage(err.Error()), "")
 		s.countTokensError(c, http.StatusBadGateway, "upstream_error", "Request failed")
 		return fmt.Errorf("upstream request failed: %w", err)
 	}
@@ -2405,6 +2808,18 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 		// 标记账号状态（429/529等）
 		s.rateLimitService.HandleUpstreamError(ctx, account, resp.StatusCode, resp.Header, respBody)
 
+		upstreamMsg := strings.TrimSpace(extractUpstreamErrorMessage(respBody))
+		upstreamMsg = sanitizeUpstreamErrorMessage(upstreamMsg)
+		upstreamDetail := ""
+		if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
+			maxBytes := s.cfg.Gateway.LogUpstreamErrorBodyMaxBytes
+			if maxBytes <= 0 {
+				maxBytes = 2048
+			}
+			upstreamDetail = truncateString(string(respBody), maxBytes)
+		}
+		setOpsUpstreamError(c, resp.StatusCode, upstreamMsg, upstreamDetail)
+
 		// 记录上游错误摘要便于排障（不回显请求内容）
 		if s.cfg != nil && s.cfg.Gateway.LogUpstreamErrorBody {
 			log.Printf(
@@ -2426,7 +2841,10 @@ func (s *GatewayService) ForwardCountTokens(ctx context.Context, c *gin.Context,
 			errMsg = "Service overloaded"
 		}
 		s.countTokensError(c, resp.StatusCode, "upstream_error", errMsg)
-		return fmt.Errorf("upstream error: %d", resp.StatusCode)
+		if upstreamMsg == "" {
+			return fmt.Errorf("upstream error: %d", resp.StatusCode)
+		}
+		return fmt.Errorf("upstream error: %d message=%s", resp.StatusCode, upstreamMsg)
 	}
 
 	// 透传成功响应
