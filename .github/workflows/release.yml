@@ -84,9 +84,296 @@ jobs:
           path: backend/internal/web/dist/
           retention-days: 1
 
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.vars.outputs.tag_name }}
+      version: ${{ steps.vars.outputs.version }}
+      owner_lower: ${{ steps.lowercase.outputs.owner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Compute tag/version
+        id: vars
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG_NAME=${{ github.event.inputs.tag }}
+          else
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+          fi
+          VERSION=${TAG_NAME#v}
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Set lowercase owner for GHCR
+        id: lowercase
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> $GITHUB_OUTPUT
+
+  build-image-amd64:
+    needs: [update-version, build-frontend, prepare]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Download VERSION artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: version-file
+          path: backend/cmd/server/
+
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: backend/internal/web/dist/
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache-dependency-path: backend/go.sum
+
+      - name: Build linux/amd64 binary
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          cd backend
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          go build -tags=embed -trimpath \
+            -ldflags "-s -w -X main.Commit=${GITHUB_SHA} -X main.Date=${BUILD_DATE} -X main.BuildType=release" \
+            -o ../sub2api \
+            ./cmd/server
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (load only)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.goreleaser
+          platforms: linux/amd64
+          load: true
+          tags: sub2api:${{ needs.prepare.outputs.version }}-amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save image artifact
+        run: |
+          docker save sub2api:${{ needs.prepare.outputs.version }}-amd64 | gzip > sub2api-image-amd64.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sub2api-image-amd64
+          path: sub2api-image-amd64.tar.gz
+          retention-days: 1
+
+  build-image-arm64:
+    needs: [update-version, build-frontend, prepare]
+    if: ${{ env.SIMPLE_RELEASE != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Download VERSION artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: version-file
+          path: backend/cmd/server/
+
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+          path: backend/internal/web/dist/
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          check-latest: false
+          cache-dependency-path: backend/go.sum
+
+      - name: Build linux/arm64 binary
+        env:
+          GOOS: linux
+          GOARCH: arm64
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          cd backend
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          go build -tags=embed -trimpath \
+            -ldflags "-s -w -X main.Commit=${GITHUB_SHA} -X main.Date=${BUILD_DATE} -X main.BuildType=release" \
+            -o ../sub2api \
+            ./cmd/server
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image (load only)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.goreleaser
+          platforms: linux/arm64
+          load: true
+          tags: sub2api:${{ needs.prepare.outputs.version }}-arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Save image artifact
+        run: |
+          docker save sub2api:${{ needs.prepare.outputs.version }}-arm64 | gzip > sub2api-image-arm64.tar.gz
+
+      - name: Upload image artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sub2api-image-arm64
+          path: sub2api-image-arm64.tar.gz
+          retention-days: 1
+
+  push-images-multiarch:
+    needs: [prepare, build-image-amd64, build-image-arm64]
+    if: ${{ env.SIMPLE_RELEASE != 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download amd64 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sub2api-image-amd64
+
+      - name: Download arm64 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sub2api-image-arm64
+
+      - name: Load images
+        run: |
+          gunzip -c sub2api-image-amd64.tar.gz | docker load
+          gunzip -c sub2api-image-arm64.tar.gz | docker load
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to DockerHub
+        if: ${{ secrets.DOCKERHUB_USERNAME != '' }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push GHCR arch images + manifests
+        env:
+          OWNER: ${{ needs.prepare.outputs.owner_lower }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          GHCR="ghcr.io/${OWNER}/sub2api"
+
+          docker tag "sub2api:${VERSION}-amd64" "${GHCR}:${VERSION}-amd64"
+          docker tag "sub2api:${VERSION}-arm64" "${GHCR}:${VERSION}-arm64"
+          docker push "${GHCR}:${VERSION}-amd64"
+          docker push "${GHCR}:${VERSION}-arm64"
+
+          docker buildx imagetools create \
+            -t "${GHCR}:${VERSION}" \
+            -t "${GHCR}:latest" \
+            "${GHCR}:${VERSION}-amd64" \
+            "${GHCR}:${VERSION}-arm64"
+
+      - name: Push DockerHub arch images + manifests
+        if: ${{ secrets.DOCKERHUB_USERNAME != '' }}
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          DH="${DOCKERHUB_USERNAME}/sub2api"
+
+          docker tag "sub2api:${VERSION}-amd64" "${DH}:${VERSION}-amd64"
+          docker tag "sub2api:${VERSION}-arm64" "${DH}:${VERSION}-arm64"
+          docker push "${DH}:${VERSION}-amd64"
+          docker push "${DH}:${VERSION}-arm64"
+
+          docker buildx imagetools create \
+            -t "${DH}:${VERSION}" \
+            -t "${DH}:latest" \
+            "${DH}:${VERSION}-amd64" \
+            "${DH}:${VERSION}-arm64"
+
+  push-images-simple:
+    needs: [prepare, build-image-amd64]
+    if: ${{ env.SIMPLE_RELEASE == 'true' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download amd64 image artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: sub2api-image-amd64
+
+      - name: Load image
+        run: |
+          gunzip -c sub2api-image-amd64.tar.gz | docker load
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push GHCR (amd64 only)
+        env:
+          OWNER: ${{ needs.prepare.outputs.owner_lower }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          GHCR="ghcr.io/${OWNER}/sub2api"
+
+          docker tag "sub2api:${VERSION}-amd64" "${GHCR}:${VERSION}-amd64"
+          docker tag "sub2api:${VERSION}-amd64" "${GHCR}:${VERSION}"
+          docker tag "sub2api:${VERSION}-amd64" "${GHCR}:latest"
+
+          docker push "${GHCR}:${VERSION}-amd64"
+          docker push "${GHCR}:${VERSION}"
+          docker push "${GHCR}:latest"
+
   release:
     needs: [update-version, build-frontend]
     runs-on: ubuntu-latest
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -116,29 +403,6 @@ jobs:
       - name: Verify Go version
         run: |
           go version | grep -q 'go1.25.5'
-
-      # Docker setup for GoReleaser
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to DockerHub
-        if: ${{ env.DOCKERHUB_USERNAME != '' }}
-        uses: docker/login-action@v3
-        env:
-          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.repository_owner }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Fetch tags with annotations
         run: |
