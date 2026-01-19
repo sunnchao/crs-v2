@@ -160,6 +160,7 @@ export default {
     notAvailable: '不可用',
     now: '现在',
     unknown: '未知',
+    minutes: '分钟',
     time: {
       never: '从未',
       justNow: '刚刚',
@@ -192,7 +193,8 @@ export default {
     expand: '展开',
     logout: '退出登录',
     github: 'GitHub',
-    mySubscriptions: '我的订阅'
+    mySubscriptions: '我的订阅',
+    docs: '文档'
   },
 
   // Auth
@@ -569,7 +571,10 @@ export default {
     previous: '上一页',
     next: '下一页',
     perPage: '每页',
-    goToPage: '跳转到第 {page} 页'
+    goToPage: '跳转到第 {page} 页',
+    jumpTo: '跳转页',
+    jumpPlaceholder: '页码',
+    jumpAction: '跳转'
   },
 
   // Errors
@@ -994,6 +999,26 @@ export default {
         fallbackGroup: '降级分组',
         fallbackHint: '非 Claude Code 请求将使用此分组，留空则直接拒绝',
         noFallback: '不降级（直接拒绝）'
+      },
+      modelRouting: {
+        title: '模型路由配置',
+        tooltip: '配置特定模型请求优先路由到指定账号。支持通配符匹配，如 claude-opus-* 匹配所有 opus 模型。',
+        enabled: '已启用',
+        disabled: '已禁用',
+        disabledHint: '启用后，配置的路由规则才会生效',
+        addRule: '添加路由规则',
+        modelPattern: '模型模式',
+        modelPatternPlaceholder: 'claude-opus-*',
+        modelPatternHint: '支持 * 通配符，如 claude-opus-* 匹配所有 opus 模型',
+        accounts: '优先账号',
+        selectAccounts: '选择账号',
+        noAccounts: '此分组暂无账号',
+        loadingAccounts: '加载账号中...',
+        removeRule: '删除规则',
+        noRules: '暂无路由规则',
+        noRulesHint: '添加路由规则以将特定模型请求优先路由到指定账号',
+        searchAccountPlaceholder: '搜索账号...',
+        accountsHint: '选择此模型模式优先使用的账号'
       }
     },
 
@@ -1113,7 +1138,7 @@ export default {
         platformType: '平台/类型',
         platform: '平台',
         type: '类型',
-        concurrencyStatus: '并发',
+        capacity: '容量',
         notes: '备注',
         priority: '优先级',
         billingRateMultiplier: '账号倍率',
@@ -1123,9 +1148,22 @@ export default {
         todayStats: '今日统计',
         groups: '分组',
         usageWindows: '用量窗口',
+        proxy: '代理',
         lastUsed: '最近使用',
         expiresAt: '过期时间',
         actions: '操作'
+      },
+      // 容量状态提示
+      capacity: {
+        windowCost: {
+          blocked: '5h窗口费用超限，账号暂停调度',
+          stickyOnly: '5h窗口费用达阈值，仅允许粘性会话',
+          normal: '5h窗口费用正常'
+        },
+        sessions: {
+          full: '活跃会话已满，新会话需等待（空闲超时：{idle}分钟）',
+          normal: '活跃会话正常（空闲超时：{idle}分钟）'
+        }
       },
       clearRateLimit: '清除速率限制',
       testConnection: '测试连接',
@@ -1362,6 +1400,35 @@ export default {
       interceptWarmupRequestsDesc: '启用后，标题生成等预热请求将返回 mock 响应，不消耗上游 token',
       autoPauseOnExpired: '过期自动暂停调度',
       autoPauseOnExpiredDesc: '启用后，账号过期将自动暂停调度',
+      // Quota control (Anthropic OAuth/SetupToken only)
+      quotaControl: {
+        title: '配额控制',
+        hint: '仅适用于 Anthropic OAuth/Setup Token 账号',
+        windowCost: {
+          label: '5h窗口费用控制',
+          hint: '限制账号在5小时窗口内的费用使用',
+          limit: '费用阈值',
+          limitPlaceholder: '50',
+          limitHint: '达到阈值后不参与新请求调度',
+          stickyReserve: '粘性预留额度',
+          stickyReservePlaceholder: '10',
+          stickyReserveHint: '为粘性会话预留的额外额度'
+        },
+        sessionLimit: {
+          label: '会话数量控制',
+          hint: '限制同时活跃的会话数量',
+          maxSessions: '最大会话数',
+          maxSessionsPlaceholder: '3',
+          maxSessionsHint: '同时活跃的最大会话数量',
+          idleTimeout: '空闲超时',
+          idleTimeoutPlaceholder: '5',
+          idleTimeoutHint: '会话空闲超时后自动释放'
+        },
+        tlsFingerprint: {
+          label: 'TLS 指纹模拟',
+          hint: '模拟 Node.js/Claude Code 客户端的 TLS 指纹'
+        }
+      },
       expired: '已过期',
       proxy: '代理',
       noProxy: '无代理',
@@ -2023,7 +2090,43 @@ export default {
       cacheCreationTokens: '缓存创建 Token',
       cacheReadTokens: '缓存读取 Token',
       failedToLoad: '加载使用记录失败',
-      ipAddress: 'IP'
+      billingType: '计费类型',
+      allBillingTypes: '全部计费类型',
+      billingTypeBalance: '钱包余额',
+      billingTypeSubscription: '订阅套餐',
+      ipAddress: 'IP',
+      cleanup: {
+        button: '清理',
+        title: '清理使用记录',
+        warning: '清理不可恢复，且会影响历史统计回看。',
+        submit: '提交清理',
+        submitting: '提交中...',
+        confirmTitle: '确认清理',
+        confirmMessage: '确定要提交清理任务吗？清理不可恢复。',
+        confirmSubmit: '确认清理',
+        cancel: '取消任务',
+        cancelConfirmTitle: '确认取消',
+        cancelConfirmMessage: '确定要取消该清理任务吗？',
+        cancelConfirm: '确认取消',
+        cancelSuccess: '清理任务已取消',
+        cancelFailed: '取消清理任务失败',
+        recentTasks: '最近清理任务',
+        loadingTasks: '正在加载任务...',
+        noTasks: '暂无清理任务',
+        range: '时间范围',
+        deletedRows: '删除数量',
+        missingRange: '请选择时间范围',
+        submitSuccess: '清理任务已创建',
+        submitFailed: '创建清理任务失败',
+        loadFailed: '加载清理任务失败',
+        status: {
+          pending: '待执行',
+          running: '执行中',
+          succeeded: '已完成',
+          failed: '失败',
+          canceled: '已取消'
+        }
+      }
     },
 
     // Ops Monitoring
