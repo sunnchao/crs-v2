@@ -750,7 +750,7 @@ const exportToCSV = async () => {
     ]
     const rows = allLogs.map((log) =>
       [
-        log.account?.name ?? '',
+        // log.account?.name ?? '',
         log.group?.name ?? '',
         log.created_at,
         log.api_key?.name || '',
