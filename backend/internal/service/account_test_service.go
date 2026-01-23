@@ -112,7 +112,7 @@ func createTestPayload(modelID string) (map[string]any, error) {
 				"content": []map[string]any{
 					{
 						"type": "text",
-						"text": "hi",
+						"text": "Only reply with the current time",
 						"cache_control": map[string]string{
 							"type": "ephemeral",
 						},
@@ -609,7 +609,7 @@ func createGeminiTestPayload() []byte {
 			{
 				"role": "user",
 				"parts": []map[string]any{
-					{"text": "hi"},
+					{"text": "Only reply with the current time"},
 				},
 			},
 		},
@@ -703,7 +703,7 @@ func createOpenAITestPayload(modelID string, isOAuth bool) map[string]any {
 				"content": []map[string]any{
 					{
 						"type": "input_text",
-						"text": "hi",
+						"text": "Only reply with the current time",
 					},
 				},
 			},
